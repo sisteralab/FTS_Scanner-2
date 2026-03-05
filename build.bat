@@ -1,0 +1,1 @@
+pyinstaller FTS_Proto_1.py -n FTS_Scanner --onedir --noconsole --windowed --add-data="ximc:." -y

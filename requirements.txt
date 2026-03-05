@@ -1,0 +1,9 @@
+importlib-metadata
+numpy==1.21.6
+PySide6
+pyqtgraph
+PyVISA
+PyVISA-py
+typing_extensions
+zipp
+pyinstaller
