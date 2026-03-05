@@ -29,6 +29,10 @@ class SimulatedMotorDevice:
         """Return current position."""
         return self.position_steps
 
+    def set_zero(self) -> None:
+        """Set current simulated position to zero."""
+        self.position_steps = 0
+
     def stop(self) -> None:
         """No-op for simulator."""
 

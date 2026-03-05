@@ -36,9 +36,14 @@ build.bat
 ## Notes
 
 - Default mode is **Simulation**, so UI works without devices.
-- Disable simulation and click **Initialize** for real hardware.
+- Use `SetUp` tab to configure addresses and click **Initialize / Test**.
+- Disable simulation for real hardware. If you see `VI_ERROR_LIBRARY_NOT_FOUND`, install NI-VISA/Keysight VISA runtime.
+- `Monitor` tab provides:
+  - motor position, set-zero, target move
+  - press-and-hold jog buttons for relative motion
+  - real-time lock-in stream with adjustable visible time window
+- `Measure` tab provides scan setup, progress bar, interferogram and FFT spectrum plots.
 - Measurements are stored in table and can be viewed/commented/saved/deleted.
-- During measurement UI shows both interferogram and FFT-based spectrum plot.
 - Runtime errors are logged to console with traceback.
 - `Save all` writes all measurements to `dumps/dump_YYYY-mm-dd_HH-MM-SS.json`.
 - Build scripts package `ximc` and `assets` into the app bundle.

@@ -13,7 +13,6 @@ from fts_scanner.devices.ximc_motor import XimcMotorDevice
 from fts_scanner.domain.models import ScanSettings
 from fts_scanner.presentation.measurement_worker import MeasurementWorker
 from fts_scanner.store.measure_store import MeasureManager, MeasureModel, MeasureType
-from fts_scanner.use_cases.initialize import InitializeHardwareUseCase
 from fts_scanner.use_cases.measure_spectrogram import MeasureSpectrogramUseCase
 from fts_scanner.use_cases.monitor import ReadSignalUseCase
 
@@ -24,7 +23,9 @@ class MainController(QObject):
     """Coordinates UI actions, device adapters and use-cases."""
 
     status_changed = Signal(str)
+    setup_status = Signal(bool, bool, str)
     monitoring_signal = Signal(float)
+    motor_position_signal = Signal(int)
     measurement_point = Signal(dict)
     measurement_started = Signal()
     measurement_finished = Signal()
@@ -38,13 +39,19 @@ class MainController(QObject):
 
         self._motor = None
         self._lock_in = None
-        self._initialize_use_case: InitializeHardwareUseCase | None = None
         self._monitor_use_case: ReadSignalUseCase | None = None
         self._measure_use_case: MeasureSpectrogramUseCase | None = None
+
+        self._motor_ready = False
+        self._lock_in_ready = False
 
         self._monitor_timer = QTimer(self)
         self._monitor_timer.setInterval(200)
         self._monitor_timer.timeout.connect(self._poll_monitor)
+
+        self._motor_timer = QTimer(self)
+        self._motor_timer.setInterval(200)
+        self._motor_timer.timeout.connect(self._poll_motor_position)
 
         self._thread: QThread | None = None
         self._worker: MeasurementWorker | None = None
@@ -61,62 +68,166 @@ class MainController(QObject):
         """Return latest handled controller error."""
         return self._last_error
 
-    def initialize_devices(self, use_simulation: bool) -> None:
+    @property
+    def config(self) -> AppConfig:
+        """Expose mutable runtime config for UI defaults."""
+        return self._config
+
+    def initialize_devices(
+        self,
+        use_simulation: bool,
+        lock_in_resource: str | None = None,
+        motor_name: str | None = None,
+        ximc_root: str | None = None,
+    ) -> None:
         """Create device adapters and initialize hardware stack."""
         logger.info("Initialize devices requested. simulation=%s", use_simulation)
         self.shutdown()
         self._last_error = None
 
+        if lock_in_resource is not None:
+            self._config.lock_in_resource = lock_in_resource.strip()
+        if motor_name is not None:
+            self._config.motor_name = motor_name.strip() or None
+        if ximc_root is not None and ximc_root.strip():
+            self._config.ximc_root = Path(ximc_root.strip())
+
         if use_simulation:
             self._motor = SimulatedMotorDevice()
             self._lock_in = SimulatedLockInDevice()
         else:
+            resolved_ximc = (
+                self._config.ximc_root
+                if self._config.ximc_root.is_absolute()
+                else self._project_root / self._config.ximc_root
+            )
             self._motor = XimcMotorDevice(
-                ximc_root=self._config.ximc_root if self._config.ximc_root.is_absolute() else self._project_root / self._config.ximc_root,
+                ximc_root=resolved_ximc,
                 motor_name=self._config.motor_name,
             )
             self._lock_in = SR830VisaLockIn(resource_name=self._config.lock_in_resource)
 
-        self._initialize_use_case = InitializeHardwareUseCase(self._motor, self._lock_in)
-        self._monitor_use_case = ReadSignalUseCase(self._lock_in)
-        self._measure_use_case = MeasureSpectrogramUseCase(self._motor, self._lock_in)
+        motor_message = "Motor not initialized"
+        lockin_message = "Lock-In not initialized"
 
         try:
-            report = self._initialize_use_case.execute()
-            logger.info(
-                "Initialization completed: lock_in=%s, motor_pos_steps=%s",
-                report.lock_in_idn,
-                report.motor_position_steps,
-            )
-            self.status_changed.emit(
-                f"Initialized. Lock-In: {report.lock_in_idn}; Motor pos: {report.motor_position_steps} steps"
-            )
-            self.initialized.emit(True)
+            self._motor.initialize()
+            self._motor_ready = True
+            pos = self._motor.get_position()
+            self.motor_position_signal.emit(pos)
+            motor_message = f"Motor connected at position {pos} steps"
         except Exception as exc:  # noqa: BLE001
+            self._motor_ready = False
             self._last_error = str(exc)
-            logger.exception("Initialization failed")
-            self.status_changed.emit(f"Initialization failed: {exc}")
-            self.initialized.emit(False)
+            motor_message = f"Motor init failed: {exc}"
+            logger.exception("Motor initialization failed")
+
+        try:
+            self._lock_in.initialize()
+            lock_in_idn = self._lock_in.identify()
+            self._lock_in_ready = True
+            lockin_message = f"Lock-In connected: {lock_in_idn}"
+        except Exception as exc:  # noqa: BLE001
+            self._lock_in_ready = False
+            self._last_error = str(exc)
+            lockin_message = f"Lock-In init failed: {exc}"
+            logger.exception("Lock-In initialization failed")
+
+        self._monitor_use_case = ReadSignalUseCase(self._lock_in) if self._lock_in_ready else None
+        self._measure_use_case = (
+            MeasureSpectrogramUseCase(self._motor, self._lock_in)
+            if self._motor_ready and self._lock_in_ready
+            else None
+        )
+
+        message = f"{motor_message}; {lockin_message}"
+        ok = self._motor_ready and self._lock_in_ready
+        self.setup_status.emit(self._motor_ready, self._lock_in_ready, message)
+        self.status_changed.emit(message)
+        self.initialized.emit(ok)
+        logger.info("Setup result. motor_ok=%s lockin_ok=%s", self._motor_ready, self._lock_in_ready)
 
     def start_monitoring(self) -> None:
-        """Enable periodic lock-in polling."""
-        if self._monitor_use_case is None:
+        """Enable periodic lock-in and motor polling."""
+        if not self._motor_ready and not self._lock_in_ready:
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
-        self._monitor_timer.start()
-        logger.info("Monitoring timer started")
+
+        if self._lock_in_ready and self._monitor_use_case is not None:
+            self._monitor_timer.start()
+        if self._motor_ready:
+            self._motor_timer.start()
+
+        logger.info("Monitoring started")
         self.status_changed.emit("Monitoring started")
 
     def stop_monitoring(self) -> None:
-        """Disable periodic lock-in polling."""
+        """Disable periodic lock-in and motor polling."""
         self._monitor_timer.stop()
-        logger.info("Monitoring timer stopped")
+        self._motor_timer.stop()
+        logger.info("Monitoring stopped")
         self.status_changed.emit("Monitoring stopped")
+
+    def move_motor_by(self, delta_steps: int, wait_ms: int = 20) -> None:
+        """Move motor by relative steps and emit updated position."""
+        if not self._motor_ready:
+            self.status_changed.emit("Motor is not initialized")
+            return
+        try:
+            self._motor.move_by(delta_steps)
+            self._motor.wait_for_stop(wait_ms)
+            pos = self._motor.get_position()
+            self.motor_position_signal.emit(pos)
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Relative motor move failed")
+            self.status_changed.emit(f"Motor move failed: {exc}")
+
+    def move_motor_to(self, target_steps: int, wait_ms: int = 100) -> None:
+        """Move motor to absolute position and emit updated position."""
+        if not self._motor_ready:
+            self.status_changed.emit("Motor is not initialized")
+            return
+        try:
+            self._motor.move_to(target_steps)
+            self._motor.wait_for_stop(wait_ms)
+            pos = self._motor.get_position()
+            self.motor_position_signal.emit(pos)
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Absolute motor move failed")
+            self.status_changed.emit(f"Motor move failed: {exc}")
+
+    def set_motor_zero(self) -> None:
+        """Set current motor position as zero."""
+        if not self._motor_ready:
+            self.status_changed.emit("Motor is not initialized")
+            return
+        try:
+            self._motor.set_zero()
+            pos = self._motor.get_position()
+            self.motor_position_signal.emit(pos)
+            self.status_changed.emit("Motor zero position set")
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Set zero failed")
+            self.status_changed.emit(f"Set zero failed: {exc}")
+
+    def stop_motor_motion(self) -> None:
+        """Stop motor immediately."""
+        if not self._motor_ready:
+            return
+        try:
+            self._motor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Stop motor failed")
+            self.status_changed.emit(f"Stop motor failed: {exc}")
 
     def start_measurement(self, settings: ScanSettings) -> None:
         """Start spectrogram measurement in background thread."""
         if self._measure_use_case is None:
-            self.status_changed.emit("Measurement is unavailable: initialize devices first")
+            self.status_changed.emit("Measurement requires initialized Motor and Lock-In")
             return
         if self.is_measurement_running:
             self.status_changed.emit("Measurement is already running")
@@ -192,6 +303,10 @@ class MainController(QObject):
             logger.info("Shutting down lock-in backend")
             self._lock_in.shutdown()
 
+        self._motor_ready = False
+        self._lock_in_ready = False
+        self._monitor_use_case = None
+        self._measure_use_case = None
         self._current_measure = None
         self._thread = None
         self._worker = None
@@ -206,7 +321,19 @@ class MainController(QObject):
             self._last_error = str(exc)
             logger.exception("Monitoring failed")
             self.status_changed.emit(f"Monitoring error: {exc}")
-            self.stop_monitoring()
+            self._monitor_timer.stop()
+
+    def _poll_motor_position(self) -> None:
+        if not self._motor_ready:
+            return
+        try:
+            pos = self._motor.get_position()
+            self.motor_position_signal.emit(pos)
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Motor position polling failed")
+            self.status_changed.emit(f"Motor polling error: {exc}")
+            self._motor_timer.stop()
 
     def _on_measurement_point(self, point: dict) -> None:
         if self._current_measure is None:

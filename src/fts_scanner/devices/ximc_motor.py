@@ -51,6 +51,11 @@ class XimcMotorDevice:
         self._lib.get_position(self._device_id, self._pyximc.byref(position))
         return int(position.Position)
 
+    def set_zero(self) -> None:
+        """Set current hardware position as logical zero."""
+        self._ensure_open()
+        self._lib.command_zero(self._device_id)
+
     def stop(self) -> None:
         """Stop movement immediately."""
         self._ensure_open()

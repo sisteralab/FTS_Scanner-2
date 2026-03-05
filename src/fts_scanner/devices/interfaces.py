@@ -21,6 +21,9 @@ class MotorDevice(Protocol):
     def get_position(self) -> int:
         """Read current stage position in steps."""
 
+    def set_zero(self) -> None:
+        """Set current stage position as logical zero."""
+
     def stop(self) -> None:
         """Emergency stop motion."""
 
