@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -22,6 +25,7 @@ class XimcMotorDevice:
         """Load pyximc wrapper and open motor device."""
         if self._device_id is not None:
             return
+        logger.info("Initializing XIMC motor from: %s", self.ximc_root)
         self._pyximc, self._lib = self._import_pyximc(self.ximc_root)
         self._device_id = self._open_device(self.motor_name)
 
@@ -56,6 +60,7 @@ class XimcMotorDevice:
         """Close device and clear loaded handles."""
         if self._device_id is None or self._pyximc is None:
             return
+        logger.info("Closing XIMC motor device")
         self._lib.close_device(self._pyximc.byref(self._pyximc.cast(self._device_id, self._pyximc.POINTER(self._pyximc.c_int))))
         self._device_id = None
 
@@ -71,6 +76,7 @@ class XimcMotorDevice:
         else:
             open_name = self._lib.get_device_name(devenum, 0)
 
+        logger.info("Opening XIMC device: %s", open_name)
         return self._lib.open_device(open_name)
 
     def _ensure_open(self) -> None:

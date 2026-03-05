@@ -38,5 +38,7 @@ build.bat
 - Default mode is **Simulation**, so UI works without devices.
 - Disable simulation and click **Initialize** for real hardware.
 - Measurements are stored in table and can be viewed/commented/saved/deleted.
+- During measurement UI shows both interferogram and FFT-based spectrum plot.
+- Runtime errors are logged to console with traceback.
 - `Save all` writes all measurements to `dumps/dump_YYYY-mm-dd_HH-MM-SS.json`.
 - Build scripts package `ximc` and `assets` into the app bundle.

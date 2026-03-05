@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from fts_scanner.store.measure_store import MeasureManager, MeasureModel, Measur
 from fts_scanner.use_cases.initialize import InitializeHardwareUseCase
 from fts_scanner.use_cases.measure_spectrogram import MeasureSpectrogramUseCase
 from fts_scanner.use_cases.monitor import ReadSignalUseCase
+
+logger = logging.getLogger(__name__)
 
 
 class MainController(QObject):
@@ -46,15 +49,23 @@ class MainController(QObject):
         self._thread: QThread | None = None
         self._worker: MeasurementWorker | None = None
         self._current_measure: MeasureModel | None = None
+        self._last_error: str | None = None
 
     @property
     def is_measurement_running(self) -> bool:
         """Check whether background measurement thread is active."""
         return self._thread is not None and self._thread.isRunning()
 
+    @property
+    def last_error(self) -> str | None:
+        """Return latest handled controller error."""
+        return self._last_error
+
     def initialize_devices(self, use_simulation: bool) -> None:
         """Create device adapters and initialize hardware stack."""
+        logger.info("Initialize devices requested. simulation=%s", use_simulation)
         self.shutdown()
+        self._last_error = None
 
         if use_simulation:
             self._motor = SimulatedMotorDevice()
@@ -72,11 +83,18 @@ class MainController(QObject):
 
         try:
             report = self._initialize_use_case.execute()
+            logger.info(
+                "Initialization completed: lock_in=%s, motor_pos_steps=%s",
+                report.lock_in_idn,
+                report.motor_position_steps,
+            )
             self.status_changed.emit(
                 f"Initialized. Lock-In: {report.lock_in_idn}; Motor pos: {report.motor_position_steps} steps"
             )
             self.initialized.emit(True)
         except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Initialization failed")
             self.status_changed.emit(f"Initialization failed: {exc}")
             self.initialized.emit(False)
 
@@ -86,11 +104,13 @@ class MainController(QObject):
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
         self._monitor_timer.start()
+        logger.info("Monitoring timer started")
         self.status_changed.emit("Monitoring started")
 
     def stop_monitoring(self) -> None:
         """Disable periodic lock-in polling."""
         self._monitor_timer.stop()
+        logger.info("Monitoring timer stopped")
         self.status_changed.emit("Monitoring stopped")
 
     def start_measurement(self, settings: ScanSettings) -> None:
@@ -101,6 +121,7 @@ class MainController(QObject):
         if self.is_measurement_running:
             self.status_changed.emit("Measurement is already running")
             return
+        logger.info("Starting measurement with settings: %s", settings)
 
         self._current_measure = MeasureManager.create(
             measure_type=MeasureType.SPECTROGRAM,
@@ -135,6 +156,7 @@ class MainController(QObject):
         if self._worker is None:
             return
         self._worker.pause()
+        logger.info("Measurement paused")
         self.status_changed.emit("Measurement paused")
 
     def resume_measurement(self) -> None:
@@ -142,6 +164,7 @@ class MainController(QObject):
         if self._worker is None:
             return
         self._worker.resume()
+        logger.info("Measurement resumed")
         self.status_changed.emit("Measurement resumed")
 
     def stop_measurement(self) -> None:
@@ -149,6 +172,7 @@ class MainController(QObject):
         if self._worker is None:
             return
         self._worker.request_stop()
+        logger.info("Stop requested for measurement")
         self.status_changed.emit("Stopping measurement...")
 
     def shutdown(self) -> None:
@@ -157,12 +181,15 @@ class MainController(QObject):
         if self._worker is not None:
             self._worker.request_stop()
         if self._thread is not None and self._thread.isRunning():
+            logger.info("Waiting active measurement thread shutdown")
             self._thread.quit()
             self._thread.wait(2000)
 
         if self._motor is not None:
+            logger.info("Shutting down motor backend")
             self._motor.shutdown()
         if self._lock_in is not None:
+            logger.info("Shutting down lock-in backend")
             self._lock_in.shutdown()
 
         self._current_measure = None
@@ -176,6 +203,8 @@ class MainController(QObject):
             value = self._monitor_use_case.execute()
             self.monitoring_signal.emit(value)
         except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Monitoring failed")
             self.status_changed.emit(f"Monitoring error: {exc}")
             self.stop_monitoring()
 
@@ -196,6 +225,7 @@ class MainController(QObject):
         if self._current_measure is not None:
             self._current_measure.data.setdefault("meta", {})["status"] = "completed"
             self._current_measure.save(finish=True)
+        logger.info("Measurement completed")
         self.status_changed.emit("Measurement completed")
         self.measurement_finished.emit()
 
@@ -204,11 +234,12 @@ class MainController(QObject):
             self._current_measure.data.setdefault("meta", {})["status"] = "failed"
             self._current_measure.data.setdefault("meta", {})["error"] = error
             self._current_measure.save(finish=True)
+        self._last_error = error
+        logger.error("Measurement failed: %s", error)
         self.status_changed.emit(f"Measurement failed: {error}")
         self.measurement_failed.emit(error)
 
     def _cleanup_thread_objects(self) -> None:
-        self._thread = None
-        self._worker = None
+        logger.info("Measurement thread cleanup")
         self._thread = None
         self._worker = None

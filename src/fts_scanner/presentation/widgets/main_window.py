@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import datetime
 
+import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fts_scanner.domain.models import ScanSettings
+from fts_scanner.domain.models import STAGE_STEP_UM, ScanSettings
 from fts_scanner.presentation.controller import MainController
 from fts_scanner.presentation.widgets.table_view import MeasureTableView
 from fts_scanner.store.measure_store import MeasureManager, MeasureTableModel
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
 
         self._measurement_x: list[int] = []
         self._measurement_y: list[float] = []
+        self._current_repeat: int = 0
+        self._active_scan_settings: ScanSettings | None = None
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -51,13 +53,26 @@ class MainWindow(QMainWindow):
         right_side = QVBoxLayout()
         main_layout.addLayout(right_side, 1)
 
+        plot_layout = QHBoxLayout()
+        right_side.addLayout(plot_layout, 3)
+
         self.plot_widget = pg.PlotWidget(self)
         self.plot_widget.setBackground("w")
+        self.plot_widget.setTitle("Interferogram")
         self.plot_widget.setLabel("left", "Signal")
         self.plot_widget.setLabel("bottom", "Position (steps)")
         self.plot_widget.showGrid(x=True, y=True)
         self._curve = self.plot_widget.plot([], [], pen=pg.mkPen(color=(200, 0, 0), width=2))
-        right_side.addWidget(self.plot_widget, 3)
+        plot_layout.addWidget(self.plot_widget, 1)
+
+        self.spectrum_plot_widget = pg.PlotWidget(self)
+        self.spectrum_plot_widget.setBackground("w")
+        self.spectrum_plot_widget.setTitle("Spectrum (FFT)")
+        self.spectrum_plot_widget.setLabel("left", "Magnitude")
+        self.spectrum_plot_widget.setLabel("bottom", "Frequency (THz, approx)")
+        self.spectrum_plot_widget.showGrid(x=True, y=True)
+        self._spectrum_curve = self.spectrum_plot_widget.plot([], [], pen=pg.mkPen(color=(0, 100, 180), width=2))
+        plot_layout.addWidget(self.spectrum_plot_widget, 1)
 
         self.table_view = MeasureTableView(self)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -177,18 +192,29 @@ class MainWindow(QMainWindow):
 
     def _on_initialized(self, ok: bool) -> None:
         if not ok:
-            QMessageBox.critical(self, "Initialization", "Device initialization failed. Check status bar for details.")
+            message = self._controller.last_error or "Device initialization failed"
+            QMessageBox.critical(self, "Initialization", message)
 
     def _on_start_measurement(self) -> None:
+        self._active_scan_settings = self._scan_settings()
+        self._current_repeat = 0
         self._measurement_x.clear()
         self._measurement_y.clear()
         self._curve.setData([], [])
-        self._controller.start_measurement(self._scan_settings())
+        self._spectrum_curve.setData([], [])
+        self._controller.start_measurement(self._active_scan_settings)
 
     def _on_measurement_point(self, point: dict) -> None:
+        repeat = int(point.get("repeat", 0))
+        index = int(point.get("index", 0))
+        if repeat != self._current_repeat and index == 0:
+            self._current_repeat = repeat
+            self._measurement_x.clear()
+            self._measurement_y.clear()
         self._measurement_x.append(int(point["position_steps"]))
         self._measurement_y.append(float(point["signal"]))
         self._curve.setData(self._measurement_x, self._measurement_y)
+        self._update_spectrum_curve()
 
     def _on_measurement_failed(self, error: str) -> None:
         self._set_measurement_buttons_state(running=False)
@@ -230,3 +256,24 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._controller.shutdown()
         event.accept()
+
+    def _update_spectrum_curve(self) -> None:
+        """Recompute and redraw FFT spectrum for current interferogram."""
+        if len(self._measurement_y) < 8:
+            self._spectrum_curve.setData([], [])
+            return
+
+        settings = self._active_scan_settings
+        if settings is None:
+            return
+
+        signal = np.asarray(self._measurement_y, dtype=float)
+        signal = signal - signal.mean()
+        window = np.hanning(signal.size)
+        spectrum = np.fft.rfft(signal * window)
+        magnitude = np.abs(spectrum)
+
+        sample_spacing_um = settings.step_units * STAGE_STEP_UM
+        freq_per_um = np.fft.rfftfreq(signal.size, d=sample_spacing_um)
+        freq_thz = freq_per_um * 299.792458
+        self._spectrum_curve.setData(freq_thz.tolist(), magnitude.tolist())

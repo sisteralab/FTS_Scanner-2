@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from fts_scanner.domain.models import ScanSettings
 from fts_scanner.use_cases.measure_spectrogram import MeasureSpectrogramUseCase
+
+logger = logging.getLogger(__name__)
 
 
 class MeasurementWorker(QObject):
@@ -26,14 +29,17 @@ class MeasurementWorker(QObject):
     def run(self) -> None:
         """Execute measurement loop and emit stream of points."""
         try:
+            logger.info("Measurement worker started")
             for point in self._use_case.execute(
                 settings=self._settings,
                 should_stop=self._should_stop,
                 should_pause=self._should_pause,
             ):
                 self.point_acquired.emit(asdict(point))
+            logger.info("Measurement worker completed")
             self.completed.emit()
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Measurement worker failed")
             self.failed.emit(str(exc))
 
     def request_stop(self) -> None:
