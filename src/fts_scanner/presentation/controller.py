@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from fts_scanner.config import AppConfig
 from fts_scanner.devices.simulated import SimulatedLockInDevice, SimulatedMotorDevice
 from fts_scanner.devices.sr830 import SR830VisaLockIn
+from fts_scanner.devices.thzdaqapi_lockin import LockInAdapterType, SR830ThzdaqapiLockIn
 from fts_scanner.devices.ximc_motor import XimcMotorDevice
 from fts_scanner.domain.models import ScanSettings
 from fts_scanner.presentation.measurement_worker import MeasurementWorker
@@ -76,6 +77,12 @@ class MainController(QObject):
     def initialize_devices(
         self,
         use_simulation: bool,
+        lock_in_adapter: str | None = None,
+        lock_in_host: str | None = None,
+        lock_in_port: int | None = None,
+        lock_in_usb_port: str | None = None,
+        lock_in_gpib_address: int | None = None,
+        thzdaqapi_src: str | None = None,
         lock_in_resource: str | None = None,
         motor_name: str | None = None,
         ximc_root: str | None = None,
@@ -87,6 +94,18 @@ class MainController(QObject):
 
         if lock_in_resource is not None:
             self._config.lock_in_resource = lock_in_resource.strip()
+        if lock_in_adapter is not None:
+            self._config.lock_in_adapter = lock_in_adapter
+        if lock_in_host is not None:
+            self._config.lock_in_host = lock_in_host.strip()
+        if lock_in_port is not None:
+            self._config.lock_in_port = int(lock_in_port)
+        if lock_in_usb_port is not None:
+            self._config.lock_in_usb_port = lock_in_usb_port.strip()
+        if lock_in_gpib_address is not None:
+            self._config.lock_in_gpib_address = int(lock_in_gpib_address)
+        if thzdaqapi_src is not None and thzdaqapi_src.strip():
+            self._config.thzdaqapi_src = Path(thzdaqapi_src.strip())
         if motor_name is not None:
             self._config.motor_name = motor_name.strip() or None
         if ximc_root is not None and ximc_root.strip():
@@ -105,7 +124,20 @@ class MainController(QObject):
                 ximc_root=resolved_ximc,
                 motor_name=self._config.motor_name,
             )
-            self._lock_in = SR830VisaLockIn(resource_name=self._config.lock_in_resource)
+            if self._config.lock_in_adapter in (
+                LockInAdapterType.PROLOGIX_ETHERNET,
+                LockInAdapterType.PROLOGIX_USB,
+            ):
+                self._lock_in = SR830ThzdaqapiLockIn(
+                    adapter_type=self._config.lock_in_adapter,
+                    gpib_address=self._config.lock_in_gpib_address,
+                    host=self._config.lock_in_host,
+                    ethernet_port=self._config.lock_in_port,
+                    usb_port=self._config.lock_in_usb_port,
+                    thzdaqapi_src=self._config.thzdaqapi_src,
+                )
+            else:
+                self._lock_in = SR830VisaLockIn(resource_name=self._config.lock_in_resource)
 
         motor_message = "Motor not initialized"
         lockin_message = "Lock-In not initialized"

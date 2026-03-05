@@ -37,7 +37,13 @@ build.bat
 
 - Default mode is **Simulation**, so UI works without devices.
 - Use `SetUp` tab to configure addresses and click **Initialize / Test**.
-- Disable simulation for real hardware. If you see `VI_ERROR_LIBRARY_NOT_FOUND`, install NI-VISA/Keysight VISA runtime.
+- Lock-In backends in `SetUp`:
+  - `Prologix Ethernet` (via `thzdaqapi`)
+  - `Prologix USB` (via `thzdaqapi`)
+  - `VISA (legacy)`
+- For Prologix mode install library:
+  - `uv pip install -e ~/Labs/scripts/thzdaqapi`
+- Disable simulation for real hardware. If you use legacy VISA and see `VI_ERROR_LIBRARY_NOT_FOUND`, install NI-VISA/Keysight VISA runtime.
 - `Monitor` tab provides:
   - motor position, set-zero, target move
   - press-and-hold jog buttons for relative motion
