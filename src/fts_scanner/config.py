@@ -9,12 +9,10 @@ class AppConfig:
     """Runtime configuration for hardware backends and defaults."""
 
     lock_in_adapter: str = "prologix_ethernet"
-    lock_in_resource: str = "GPIB1::8::INSTR"
     lock_in_host: str = "169.254.156.103"
     lock_in_port: int = 1234
     lock_in_usb_port: str = "/dev/tty.usbserial"
     lock_in_gpib_address: int = 8
-    thzdaqapi_src: Path = Path.home() / "Labs/scripts/thzdaqapi/src"
     motor_name: str | None = "xi-com:\\\\.\\COM4"
     ximc_root: Path = Path("ximc")
     default_wait_ms: int = 400

@@ -36,7 +36,6 @@ class SetupTab(QWidget):
         self.lockin_adapter_combo = QComboBox(conn_box)
         self.lockin_adapter_combo.addItem("Prologix Ethernet", LockInAdapterType.PROLOGIX_ETHERNET)
         self.lockin_adapter_combo.addItem("Prologix USB", LockInAdapterType.PROLOGIX_USB)
-        self.lockin_adapter_combo.addItem("VISA (legacy)", "visa")
 
         current_adapter = self._controller.config.lock_in_adapter
         index = self.lockin_adapter_combo.findData(current_adapter)
@@ -57,12 +56,6 @@ class SetupTab(QWidget):
         self.lockin_gpib_spin.setRange(0, 30)
         self.lockin_gpib_spin.setValue(self._controller.config.lock_in_gpib_address)
 
-        self.lockin_resource_edit = QLineEdit(conn_box)
-        self.lockin_resource_edit.setText(self._controller.config.lock_in_resource)
-
-        self.thzdaqapi_path_edit = QLineEdit(conn_box)
-        self.thzdaqapi_path_edit.setText(str(self._controller.config.thzdaqapi_src))
-
         self.motor_name_edit = QLineEdit(conn_box)
         self.motor_name_edit.setText(self._controller.config.motor_name or "")
 
@@ -75,8 +68,6 @@ class SetupTab(QWidget):
         conn_form.addRow("Prologix ethernet port", self.lockin_port_spin)
         conn_form.addRow("Prologix USB serial port", self.lockin_usb_port_edit)
         conn_form.addRow("Lock-In GPIB address", self.lockin_gpib_spin)
-        conn_form.addRow("Lock-In VISA resource", self.lockin_resource_edit)
-        conn_form.addRow("thzdaqapi src path", self.thzdaqapi_path_edit)
         conn_form.addRow("Motor name", self.motor_name_edit)
         conn_form.addRow("XIMC path", self.ximc_path_edit)
 
@@ -111,8 +102,6 @@ class SetupTab(QWidget):
             lock_in_port=self.lockin_port_spin.value(),
             lock_in_usb_port=self.lockin_usb_port_edit.text(),
             lock_in_gpib_address=self.lockin_gpib_spin.value(),
-            thzdaqapi_src=self.thzdaqapi_path_edit.text(),
-            lock_in_resource=self.lockin_resource_edit.text(),
             motor_name=self.motor_name_edit.text(),
             ximc_root=self.ximc_path_edit.text(),
         )

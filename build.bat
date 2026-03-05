@@ -26,7 +26,6 @@ if errorlevel 1 exit /b 1
   --paths "%ROOT_DIR%\src" ^
   --add-data "%ROOT_DIR%\ximc;ximc" ^
   --add-data "%ROOT_DIR%\assets;assets" ^
-  --hidden-import "pyvisa_py" ^
   --icon "%ROOT_DIR%\assets\app_icon.ico" ^
   "%ROOT_DIR%\src\main.py"
 if errorlevel 1 exit /b 1

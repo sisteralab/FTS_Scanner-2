@@ -8,7 +8,6 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from fts_scanner.config import AppConfig
 from fts_scanner.devices.simulated import SimulatedLockInDevice, SimulatedMotorDevice
-from fts_scanner.devices.sr830 import SR830VisaLockIn
 from fts_scanner.devices.thzdaqapi_lockin import LockInAdapterType, SR830ThzdaqapiLockIn
 from fts_scanner.devices.ximc_motor import XimcMotorDevice
 from fts_scanner.domain.models import ScanSettings
@@ -83,8 +82,6 @@ class MainController(QObject):
         lock_in_port: int | None = None,
         lock_in_usb_port: str | None = None,
         lock_in_gpib_address: int | None = None,
-        thzdaqapi_src: str | None = None,
-        lock_in_resource: str | None = None,
         motor_name: str | None = None,
         ximc_root: str | None = None,
     ) -> None:
@@ -93,8 +90,6 @@ class MainController(QObject):
         self.shutdown()
         self._last_error = None
 
-        if lock_in_resource is not None:
-            self._config.lock_in_resource = lock_in_resource.strip()
         if lock_in_adapter is not None:
             self._config.lock_in_adapter = lock_in_adapter
         if lock_in_host is not None:
@@ -105,8 +100,6 @@ class MainController(QObject):
             self._config.lock_in_usb_port = lock_in_usb_port.strip()
         if lock_in_gpib_address is not None:
             self._config.lock_in_gpib_address = int(lock_in_gpib_address)
-        if thzdaqapi_src is not None and thzdaqapi_src.strip():
-            self._config.thzdaqapi_src = Path(thzdaqapi_src.strip())
         if motor_name is not None:
             self._config.motor_name = motor_name.strip() or None
         if ximc_root is not None and ximc_root.strip():
@@ -125,20 +118,21 @@ class MainController(QObject):
                 ximc_root=resolved_ximc,
                 motor_name=self._config.motor_name,
             )
-            if self._config.lock_in_adapter in (
+            if self._config.lock_in_adapter not in (
                 LockInAdapterType.PROLOGIX_ETHERNET,
                 LockInAdapterType.PROLOGIX_USB,
             ):
-                self._lock_in = SR830ThzdaqapiLockIn(
-                    adapter_type=self._config.lock_in_adapter,
-                    gpib_address=self._config.lock_in_gpib_address,
-                    host=self._config.lock_in_host,
-                    ethernet_port=self._config.lock_in_port,
-                    usb_port=self._config.lock_in_usb_port,
-                    thzdaqapi_src=self._config.thzdaqapi_src,
+                raise RuntimeError(
+                    f"Unsupported Lock-In adapter '{self._config.lock_in_adapter}'. "
+                    "Use prologix_ethernet or prologix_usb."
                 )
-            else:
-                self._lock_in = SR830VisaLockIn(resource_name=self._config.lock_in_resource)
+            self._lock_in = SR830ThzdaqapiLockIn(
+                adapter_type=self._config.lock_in_adapter,
+                gpib_address=self._config.lock_in_gpib_address,
+                host=self._config.lock_in_host,
+                ethernet_port=self._config.lock_in_port,
+                usb_port=self._config.lock_in_usb_port,
+            )
 
         motor_message = "Motor not initialized"
         lockin_message = "Lock-In not initialized"

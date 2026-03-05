@@ -24,7 +24,6 @@ fi
   --paths "$ROOT_DIR/src" \
   --add-data "$ROOT_DIR/ximc:ximc" \
   --add-data "$ROOT_DIR/assets:assets" \
-  --hidden-import "pyvisa_py" \
   --icon "$ICON_PATH" \
   "$ROOT_DIR/src/main.py"
 
