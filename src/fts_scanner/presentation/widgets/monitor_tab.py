@@ -50,10 +50,10 @@ class MonitorTab(QWidget):
         self.motor_position_label = QLabel("0", motor_box)
         self.jog_step_spin = QSpinBox(motor_box)
         self.jog_step_spin.setRange(1, 5000)
-        self.jog_step_spin.setValue(10)
+        self.jog_step_spin.setValue(200)
 
-        self.jog_left_button = QPushButton("◀", motor_box)
-        self.jog_right_button = QPushButton("▶", motor_box)
+        self.jog_left_button = QPushButton("Jog -", motor_box)
+        self.jog_right_button = QPushButton("Jog +", motor_box)
         self.set_zero_button = QPushButton("Set Zero", motor_box)
 
         self.target_position_spin = QSpinBox(motor_box)
@@ -107,6 +107,8 @@ class MonitorTab(QWidget):
 
         self._controller.monitoring_signal.connect(self._on_signal)
         self._controller.motor_position_signal.connect(self._on_motor_position)
+        self._controller.monitoring_state_changed.connect(self._set_monitor_buttons_state)
+        self._set_monitor_buttons_state(False)
 
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
@@ -128,7 +130,7 @@ class MonitorTab(QWidget):
         if self._jog_direction == 0:
             return
         step = self.jog_step_spin.value() * self._jog_direction
-        self._controller.move_motor_by(step, wait_ms=40)
+        self._controller.move_motor_by(step, wait_ms=80)
 
     def _move_to_target(self) -> None:
         self._controller.move_motor_to(self.target_position_spin.value(), wait_ms=100)
@@ -147,3 +149,7 @@ class MonitorTab(QWidget):
         x = [t - now for t, _ in self._signal_samples]
         y = [v for _, v in self._signal_samples]
         self._stream_curve.setData(x, y)
+
+    def _set_monitor_buttons_state(self, is_running: bool) -> None:
+        self.start_monitor_button.setEnabled(not is_running)
+        self.stop_monitor_button.setEnabled(is_running)

@@ -25,6 +25,7 @@ class MainController(QObject):
 
     status_changed = Signal(str)
     setup_status = Signal(bool, bool, str)
+    monitoring_state_changed = Signal(bool)
     monitoring_signal = Signal(float)
     motor_position_signal = Signal(int)
     measurement_point = Signal(dict)
@@ -172,7 +173,10 @@ class MainController(QObject):
             else None
         )
 
-        message = f"{motor_message}; {lockin_message}"
+        if use_simulation:
+            message = f"Simulation mode enabled. {motor_message}; {lockin_message}"
+        else:
+            message = f"{motor_message}; {lockin_message}"
         ok = self._motor_ready and self._lock_in_ready
         self.setup_status.emit(self._motor_ready, self._lock_in_ready, message)
         self.status_changed.emit(message)
@@ -181,6 +185,9 @@ class MainController(QObject):
 
     def start_monitoring(self) -> None:
         """Enable periodic lock-in and motor polling."""
+        if self.is_monitoring():
+            self.status_changed.emit("Monitoring already running")
+            return
         if not self._motor_ready and not self._lock_in_ready:
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
@@ -192,6 +199,7 @@ class MainController(QObject):
 
         logger.info("Monitoring started")
         self.status_changed.emit("Monitoring started")
+        self.monitoring_state_changed.emit(True)
 
     def stop_monitoring(self) -> None:
         """Disable periodic lock-in and motor polling."""
@@ -199,6 +207,11 @@ class MainController(QObject):
         self._motor_timer.stop()
         logger.info("Monitoring stopped")
         self.status_changed.emit("Monitoring stopped")
+        self.monitoring_state_changed.emit(False)
+
+    def is_monitoring(self) -> bool:
+        """Return True if monitor timers are active."""
+        return self._monitor_timer.isActive() or self._motor_timer.isActive()
 
     def move_motor_by(self, delta_steps: int, wait_ms: int = 20) -> None:
         """Move motor by relative steps and emit updated position."""
@@ -354,6 +367,8 @@ class MainController(QObject):
             logger.exception("Monitoring failed")
             self.status_changed.emit(f"Monitoring error: {exc}")
             self._monitor_timer.stop()
+            if not self._motor_timer.isActive():
+                self.monitoring_state_changed.emit(False)
 
     def _poll_motor_position(self) -> None:
         if not self._motor_ready:
@@ -366,6 +381,8 @@ class MainController(QObject):
             logger.exception("Motor position polling failed")
             self.status_changed.emit(f"Motor polling error: {exc}")
             self._motor_timer.stop()
+            if not self._monitor_timer.isActive():
+                self.monitoring_state_changed.emit(False)
 
     def _on_measurement_point(self, point: dict) -> None:
         if self._current_measure is None:

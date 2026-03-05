@@ -28,38 +28,46 @@ class XimcMotorDevice:
         logger.info("Initializing XIMC motor from: %s", self.ximc_root)
         self._pyximc, self._lib = self._import_pyximc(self.ximc_root)
         self._device_id = self._open_device(self.motor_name)
+        # Validation read to fail fast on invalid/opened-but-unusable handles.
+        _ = self.get_position()
 
     def move_to(self, steps: int) -> None:
         """Move to absolute position in steps."""
         self._ensure_open()
-        self._lib.command_move(self._device_id, int(steps), 0)
+        result = self._lib.command_move(self._device_id, int(steps), 0)
+        self._expect_ok(result, "command_move")
 
     def move_by(self, delta_steps: int) -> None:
         """Move by relative amount in steps."""
         self._ensure_open()
-        self._lib.command_movr(self._device_id, int(delta_steps), 0)
+        result = self._lib.command_movr(self._device_id, int(delta_steps), 0)
+        self._expect_ok(result, "command_movr")
 
     def wait_for_stop(self, timeout_ms: int) -> None:
         """Wait until motor stops or timeout expires."""
         self._ensure_open()
-        self._lib.command_wait_for_stop(self._device_id, int(timeout_ms))
+        result = self._lib.command_wait_for_stop(self._device_id, int(timeout_ms))
+        self._expect_ok(result, "command_wait_for_stop")
 
     def get_position(self) -> int:
         """Read current stage position in steps."""
         self._ensure_open()
         position = self._pyximc.get_position_t()
-        self._lib.get_position(self._device_id, self._pyximc.byref(position))
+        result = self._lib.get_position(self._device_id, self._pyximc.byref(position))
+        self._expect_ok(result, "get_position")
         return int(position.Position)
 
     def set_zero(self) -> None:
         """Set current hardware position as logical zero."""
         self._ensure_open()
-        self._lib.command_zero(self._device_id)
+        result = self._lib.command_zero(self._device_id)
+        self._expect_ok(result, "command_zero")
 
     def stop(self) -> None:
         """Stop movement immediately."""
         self._ensure_open()
-        self._lib.command_stop(self._device_id)
+        result = self._lib.command_stop(self._device_id)
+        self._expect_ok(result, "command_stop")
 
     def shutdown(self) -> None:
         """Close device and clear loaded handles."""
@@ -87,6 +95,13 @@ class XimcMotorDevice:
     def _ensure_open(self) -> None:
         if self._device_id is None:
             raise RuntimeError("XIMC motor is not initialized")
+
+    def _expect_ok(self, result: int, operation: str) -> None:
+        ok_code = int(getattr(self._pyximc.Result, "Ok", 0))
+        if int(result) != ok_code:
+            message = f"XIMC {operation} failed with code={result}"
+            logger.error(message)
+            raise RuntimeError(message)
 
     @staticmethod
     def _import_pyximc(ximc_root: Path) -> tuple[Any, Any]:

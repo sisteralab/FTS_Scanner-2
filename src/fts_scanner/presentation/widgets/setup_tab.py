@@ -31,7 +31,7 @@ class SetupTab(QWidget):
         conn_form = QFormLayout(conn_box)
 
         self.simulation_checkbox = QCheckBox("Simulation mode", conn_box)
-        self.simulation_checkbox.setChecked(True)
+        self.simulation_checkbox.setChecked(False)
 
         self.lockin_adapter_combo = QComboBox(conn_box)
         self.lockin_adapter_combo.addItem("Prologix Ethernet", LockInAdapterType.PROLOGIX_ETHERNET)
