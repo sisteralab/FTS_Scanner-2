@@ -27,7 +27,6 @@ class MonitorTab(QWidget):
         self._controller = controller
 
         self._signal_samples: list[tuple[float, float]] = []
-        self._stream_start = time.monotonic()
 
         self._jog_direction = 0
         self._jog_timer = QTimer(self)
@@ -86,7 +85,7 @@ class MonitorTab(QWidget):
         self.stream_plot = pg.PlotWidget(lockin_box)
         self.stream_plot.setBackground("w")
         self.stream_plot.setLabel("left", "Signal")
-        self.stream_plot.setLabel("bottom", "Time (s, latest=0)")
+        self.stream_plot.setLabel("bottom", "Time (s)")
         self.stream_plot.showGrid(x=True, y=True)
         self._stream_curve = self.stream_plot.plot([], [], pen=pg.mkPen(color=(0, 120, 160), width=2))
 
@@ -112,7 +111,6 @@ class MonitorTab(QWidget):
 
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
-        self._stream_start = time.monotonic()
         self._stream_curve.setData([], [])
         self._controller.start_monitoring()
 
@@ -140,13 +138,18 @@ class MonitorTab(QWidget):
 
     def _on_signal(self, value: float) -> None:
         self.current_signal_label.setText(f"{value:.6f}")
-        now = time.monotonic() - self._stream_start
-        self._signal_samples.append((now, value))
-
+        timestamp = time.time()
+        self._signal_samples.append((timestamp, value))
         window = float(self.window_seconds_spin.value())
-        t_min = now - window
-        self._signal_samples = [(t, v) for t, v in self._signal_samples if t >= t_min]
-        x = [t - now for t, _ in self._signal_samples]
+        latest_ts = self._signal_samples[-1][0]
+        while self._signal_samples and (latest_ts - self._signal_samples[0][0]) >= window:
+            self._signal_samples.pop(0)
+        if not self._signal_samples:
+            self._stream_curve.setData([], [])
+            return
+
+        base_ts = self._signal_samples[0][0]
+        x = [t - base_ts for t, _ in self._signal_samples]
         y = [v for _, v in self._signal_samples]
         self._stream_curve.setData(x, y)
 
