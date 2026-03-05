@@ -1,2 +1,17 @@
 *venv
 .idea
+*.DS_Store
+*.pyc
+__pycache__/
+*.log
+*.sqlite3
+*.env
+.env.*
+*.bak
+*.tmp
+*.swp
+*.swo
+*.egg-info/
+dist/
+build/
+dumps/
