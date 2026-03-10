@@ -22,6 +22,8 @@ fi
   --name "FTS_Scanner" \
   --windowed \
   --paths "$ROOT_DIR/src" \
+  --hidden-import pyvisa \
+  --hidden-import pyvisa_py \
   --add-data "$ROOT_DIR/ximc:ximc" \
   --add-data "$ROOT_DIR/assets:assets" \
   --icon "$ICON_PATH" \

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fts_scanner.devices.thzdaqapi_lockin import LockInAdapterType
+from fts_scanner.devices.lockin_types import LOCKIN_ADAPTER_LABELS, LockInAdapterType
 from fts_scanner.presentation.controller import MainController
 
 
@@ -28,14 +28,14 @@ class SetupTab(QWidget):
         layout = QVBoxLayout(self)
 
         conn_box = QGroupBox("Connection Settings", self)
-        conn_form = QFormLayout(conn_box)
+        self._conn_form = QFormLayout(conn_box)
 
         self.simulation_checkbox = QCheckBox("Simulation mode", conn_box)
-        self.simulation_checkbox.setChecked(False)
+        self.simulation_checkbox.setChecked(self._controller.config.use_simulation)
 
         self.lockin_adapter_combo = QComboBox(conn_box)
-        self.lockin_adapter_combo.addItem("Prologix Ethernet", LockInAdapterType.PROLOGIX_ETHERNET)
-        self.lockin_adapter_combo.addItem("Prologix USB", LockInAdapterType.PROLOGIX_USB)
+        for value, text in LOCKIN_ADAPTER_LABELS.items():
+            self.lockin_adapter_combo.addItem(text, value)
 
         current_adapter = self._controller.config.lock_in_adapter
         index = self.lockin_adapter_combo.findData(current_adapter)
@@ -56,20 +56,29 @@ class SetupTab(QWidget):
         self.lockin_gpib_spin.setRange(0, 30)
         self.lockin_gpib_spin.setValue(self._controller.config.lock_in_gpib_address)
 
+        self.lockin_visa_resource_edit = QLineEdit(conn_box)
+        self.lockin_visa_resource_edit.setText(self._controller.config.lock_in_visa_resource)
+
+        self.lockin_visa_library_edit = QLineEdit(conn_box)
+        self.lockin_visa_library_edit.setText(self._controller.config.lock_in_visa_library)
+        self.lockin_visa_library_edit.setPlaceholderText("Optional, e.g. /Library/Frameworks/VISA.framework/VISA")
+
         self.motor_name_edit = QLineEdit(conn_box)
         self.motor_name_edit.setText(self._controller.config.motor_name or "")
 
         self.ximc_path_edit = QLineEdit(conn_box)
         self.ximc_path_edit.setText(str(self._controller.config.ximc_root))
 
-        conn_form.addRow(self.simulation_checkbox)
-        conn_form.addRow("Lock-In adapter", self.lockin_adapter_combo)
-        conn_form.addRow("Prologix host", self.lockin_host_edit)
-        conn_form.addRow("Prologix ethernet port", self.lockin_port_spin)
-        conn_form.addRow("Prologix USB serial port", self.lockin_usb_port_edit)
-        conn_form.addRow("Lock-In GPIB address", self.lockin_gpib_spin)
-        conn_form.addRow("Motor name", self.motor_name_edit)
-        conn_form.addRow("XIMC path", self.ximc_path_edit)
+        self._conn_form.addRow(self.simulation_checkbox)
+        self._conn_form.addRow("Lock-In adapter", self.lockin_adapter_combo)
+        self._conn_form.addRow("Prologix host", self.lockin_host_edit)
+        self._conn_form.addRow("Prologix ethernet port", self.lockin_port_spin)
+        self._conn_form.addRow("Prologix USB serial port", self.lockin_usb_port_edit)
+        self._conn_form.addRow("Lock-In GPIB address", self.lockin_gpib_spin)
+        self._conn_form.addRow("VISA resource", self.lockin_visa_resource_edit)
+        self._conn_form.addRow("VISA library", self.lockin_visa_library_edit)
+        self._conn_form.addRow("Motor name", self.motor_name_edit)
+        self._conn_form.addRow("XIMC path", self.ximc_path_edit)
 
         layout.addWidget(conn_box)
 
@@ -92,7 +101,11 @@ class SetupTab(QWidget):
         layout.addStretch(1)
 
         self.init_button.clicked.connect(self._on_initialize_clicked)
+        self.lockin_adapter_combo.currentIndexChanged.connect(self._update_adapter_fields)
+        self.simulation_checkbox.toggled.connect(self._update_adapter_fields)
         self._controller.setup_status.connect(self._on_setup_status)
+
+        self._update_adapter_fields()
 
     def _on_initialize_clicked(self) -> None:
         self._controller.initialize_devices(
@@ -102,9 +115,32 @@ class SetupTab(QWidget):
             lock_in_port=self.lockin_port_spin.value(),
             lock_in_usb_port=self.lockin_usb_port_edit.text(),
             lock_in_gpib_address=self.lockin_gpib_spin.value(),
+            lock_in_visa_resource=self.lockin_visa_resource_edit.text(),
+            lock_in_visa_library=self.lockin_visa_library_edit.text(),
             motor_name=self.motor_name_edit.text(),
             ximc_root=self.ximc_path_edit.text(),
         )
+
+    def _update_adapter_fields(self) -> None:
+        adapter = str(self.lockin_adapter_combo.currentData())
+        simulated = self.simulation_checkbox.isChecked()
+
+        is_eth = adapter == LockInAdapterType.PROLOGIX_ETHERNET
+        is_usb = adapter == LockInAdapterType.PROLOGIX_USB
+        is_visa = adapter == LockInAdapterType.KEYSIGHT_VISA
+
+        self._set_row_visible(self.lockin_host_edit, is_eth and not simulated)
+        self._set_row_visible(self.lockin_port_spin, is_eth and not simulated)
+        self._set_row_visible(self.lockin_usb_port_edit, is_usb and not simulated)
+        self._set_row_visible(self.lockin_gpib_spin, (is_eth or is_usb) and not simulated)
+        self._set_row_visible(self.lockin_visa_resource_edit, is_visa and not simulated)
+        self._set_row_visible(self.lockin_visa_library_edit, is_visa and not simulated)
+
+    def _set_row_visible(self, field: QWidget, visible: bool) -> None:
+        label = self._conn_form.labelForField(field)
+        if label is not None:
+            label.setVisible(visible)
+        field.setVisible(visible)
 
     def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, message: str) -> None:
         self.motor_status_label.setText("Connected" if motor_ok else "Failed")

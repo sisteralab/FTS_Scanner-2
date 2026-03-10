@@ -7,6 +7,8 @@ pefile==2024.8.26
 pyinstaller==6.19.0
 pyinstaller-hooks-contrib==2026.2
 pyqtgraph==0.14.0
+pyvisa==1.15.0
+pyvisa-py==0.8.1
 pyside6==6.10.2
 pyside6-addons==6.10.2
 pyside6-essentials==6.10.2

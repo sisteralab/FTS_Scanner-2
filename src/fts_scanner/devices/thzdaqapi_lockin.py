@@ -4,14 +4,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from fts_scanner.devices.lockin_types import LockInAdapterType
+
 logger = logging.getLogger(__name__)
-
-
-class LockInAdapterType:
-    """Supported lock-in adapter backends via thzdaqapi."""
-
-    PROLOGIX_ETHERNET = "prologix_ethernet"
-    PROLOGIX_USB = "prologix_usb"
 
 
 @dataclass(slots=True)

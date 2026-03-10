@@ -20,25 +20,29 @@ def run() -> int:
     _configure_logging()
     sys.excepthook = _handle_uncaught_exception
     app = QApplication(sys.argv)
-    project_root = _resolve_runtime_root()
-    icon_path = project_root / "assets" / "app_icon.png"
+
+    bundle_root, settings_root = _resolve_runtime_paths()
+    icon_path = bundle_root / "assets" / "app_icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
-    config = AppConfig.from_project_root(project_root)
-    controller = MainController(config=config, project_root=project_root)
+
+    config = AppConfig.from_project_root(settings_root)
+    controller = MainController(config=config, project_root=bundle_root)
     window = MainWindow(controller)
     window.show()
     return app.exec()
 
 
-def _resolve_runtime_root() -> Path:
-    """Resolve project/bundle root for source and frozen execution."""
+def _resolve_runtime_paths() -> tuple[Path, Path]:
+    """Resolve bundle root and persistent settings root."""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            return Path(meipass)
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[2]
+        bundle_root = Path(meipass) if meipass else Path(sys.executable).resolve().parent
+        settings_root = Path(sys.executable).resolve().parent
+        return bundle_root, settings_root
+
+    project_root = Path(__file__).resolve().parents[2]
+    return project_root, project_root
 
 
 def _configure_logging() -> None:

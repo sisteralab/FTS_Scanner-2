@@ -7,14 +7,16 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from fts_scanner.config import AppConfig
+from fts_scanner.devices.lockin_types import LockInAdapterType
 from fts_scanner.devices.simulated import SimulatedLockInDevice, SimulatedMotorDevice
-from fts_scanner.devices.thzdaqapi_lockin import LockInAdapterType, SR830ThzdaqapiLockIn
+from fts_scanner.devices.sr830_visa import SR830VisaLockIn
+from fts_scanner.devices.thzdaqapi_lockin import SR830ThzdaqapiLockIn
 from fts_scanner.devices.ximc_motor import XimcMotorDevice
 from fts_scanner.domain.models import ScanSettings
+from fts_scanner.presentation.device_workers import LockInIoWorker, MotorIoWorker
 from fts_scanner.presentation.measurement_worker import MeasurementWorker
 from fts_scanner.store.measure_store import MeasureManager, MeasureModel, MeasureType
 from fts_scanner.use_cases.measure_spectrogram import MeasureSpectrogramUseCase
-from fts_scanner.use_cases.monitor import ReadSignalUseCase
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,14 @@ class MainController(QObject):
     measurement_failed = Signal(str)
     initialized = Signal(bool)
 
+    motor_poll_requested = Signal()
+    motor_move_by_requested = Signal(int, int)
+    motor_move_to_requested = Signal(int, int)
+    motor_set_zero_requested = Signal()
+    motor_stop_requested = Signal()
+
+    lockin_poll_requested = Signal()
+
     def __init__(self, config: AppConfig, project_root: Path) -> None:
         super().__init__()
         self._config = config
@@ -40,7 +50,6 @@ class MainController(QObject):
 
         self._motor = None
         self._lock_in = None
-        self._monitor_use_case: ReadSignalUseCase | None = None
         self._measure_use_case: MeasureSpectrogramUseCase | None = None
 
         self._motor_ready = False
@@ -48,11 +57,16 @@ class MainController(QObject):
 
         self._monitor_timer = QTimer(self)
         self._monitor_timer.setInterval(200)
-        self._monitor_timer.timeout.connect(self._poll_monitor)
+        self._monitor_timer.timeout.connect(self._request_lockin_poll)
 
         self._motor_timer = QTimer(self)
         self._motor_timer.setInterval(200)
-        self._motor_timer.timeout.connect(self._poll_motor_position)
+        self._motor_timer.timeout.connect(self._request_motor_poll)
+
+        self._motor_thread: QThread | None = None
+        self._motor_worker: MotorIoWorker | None = None
+        self._lockin_thread: QThread | None = None
+        self._lockin_worker: LockInIoWorker | None = None
 
         self._thread: QThread | None = None
         self._worker: MeasurementWorker | None = None
@@ -82,6 +96,8 @@ class MainController(QObject):
         lock_in_port: int | None = None,
         lock_in_usb_port: str | None = None,
         lock_in_gpib_address: int | None = None,
+        lock_in_visa_resource: str | None = None,
+        lock_in_visa_library: str | None = None,
         motor_name: str | None = None,
         ximc_root: str | None = None,
     ) -> None:
@@ -90,6 +106,7 @@ class MainController(QObject):
         self.shutdown()
         self._last_error = None
 
+        self._config.use_simulation = bool(use_simulation)
         if lock_in_adapter is not None:
             self._config.lock_in_adapter = lock_in_adapter
         if lock_in_host is not None:
@@ -100,10 +117,19 @@ class MainController(QObject):
             self._config.lock_in_usb_port = lock_in_usb_port.strip()
         if lock_in_gpib_address is not None:
             self._config.lock_in_gpib_address = int(lock_in_gpib_address)
+        if lock_in_visa_resource is not None:
+            self._config.lock_in_visa_resource = lock_in_visa_resource.strip()
+        if lock_in_visa_library is not None:
+            self._config.lock_in_visa_library = lock_in_visa_library.strip()
         if motor_name is not None:
             self._config.motor_name = motor_name.strip() or None
         if ximc_root is not None and ximc_root.strip():
             self._config.ximc_root = Path(ximc_root.strip())
+
+        try:
+            self._config.save_to_ini()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to persist settings.ini")
 
         if use_simulation:
             self._motor = SimulatedMotorDevice()
@@ -118,21 +144,7 @@ class MainController(QObject):
                 ximc_root=resolved_ximc,
                 motor_name=self._config.motor_name,
             )
-            if self._config.lock_in_adapter not in (
-                LockInAdapterType.PROLOGIX_ETHERNET,
-                LockInAdapterType.PROLOGIX_USB,
-            ):
-                raise RuntimeError(
-                    f"Unsupported Lock-In adapter '{self._config.lock_in_adapter}'. "
-                    "Use prologix_ethernet or prologix_usb."
-                )
-            self._lock_in = SR830ThzdaqapiLockIn(
-                adapter_type=self._config.lock_in_adapter,
-                gpib_address=self._config.lock_in_gpib_address,
-                host=self._config.lock_in_host,
-                ethernet_port=self._config.lock_in_port,
-                usb_port=self._config.lock_in_usb_port,
-            )
+            self._lock_in = self._build_lock_in_device()
 
         motor_message = "Motor not initialized"
         lockin_message = "Lock-In not initialized"
@@ -142,6 +154,7 @@ class MainController(QObject):
             self._motor_ready = True
             pos = self._motor.get_position()
             self.motor_position_signal.emit(pos)
+            self._start_motor_worker(self._motor)
             motor_message = f"Motor connected at position {pos} steps"
         except Exception as exc:  # noqa: BLE001
             self._motor_ready = False
@@ -153,6 +166,7 @@ class MainController(QObject):
             self._lock_in.initialize()
             lock_in_idn = self._lock_in.identify()
             self._lock_in_ready = True
+            self._start_lockin_worker(self._lock_in)
             lockin_message = f"Lock-In connected: {lock_in_idn}"
         except Exception as exc:  # noqa: BLE001
             self._lock_in_ready = False
@@ -160,7 +174,6 @@ class MainController(QObject):
             lockin_message = f"Lock-In init failed: {exc}"
             logger.exception("Lock-In initialization failed")
 
-        self._monitor_use_case = ReadSignalUseCase(self._lock_in) if self._lock_in_ready else None
         self._measure_use_case = (
             MeasureSpectrogramUseCase(self._motor, self._lock_in)
             if self._motor_ready and self._lock_in_ready
@@ -186,9 +199,9 @@ class MainController(QObject):
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
 
-        if self._lock_in_ready and self._monitor_use_case is not None:
+        if self._lock_in_ready and self._lockin_worker is not None:
             self._monitor_timer.start()
-        if self._motor_ready:
+        if self._motor_ready and self._motor_worker is not None:
             self._motor_timer.start()
 
         logger.info("Monitoring started")
@@ -197,71 +210,53 @@ class MainController(QObject):
 
     def stop_monitoring(self) -> None:
         """Disable periodic lock-in and motor polling."""
+        was_running = self.is_monitoring()
         self._monitor_timer.stop()
         self._motor_timer.stop()
-        logger.info("Monitoring stopped")
-        self.status_changed.emit("Monitoring stopped")
-        self.monitoring_state_changed.emit(False)
+        if was_running:
+            logger.info("Monitoring stopped")
+            self.status_changed.emit("Monitoring stopped")
+            self.monitoring_state_changed.emit(False)
 
     def is_monitoring(self) -> bool:
         """Return True if monitor timers are active."""
         return self._monitor_timer.isActive() or self._motor_timer.isActive()
 
     def move_motor_by(self, delta_steps: int, wait_ms: int = 20) -> None:
-        """Move motor by relative steps and emit updated position."""
-        if not self._motor_ready:
+        """Queue relative motor move in worker thread."""
+        if self.is_measurement_running:
+            self.status_changed.emit("Motor control is disabled while measurement is running")
+            return
+        if not self._motor_ready or self._motor_worker is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        try:
-            self._motor.move_by(delta_steps)
-            self._motor.wait_for_stop(wait_ms)
-            pos = self._motor.get_position()
-            self.motor_position_signal.emit(pos)
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Relative motor move failed")
-            self.status_changed.emit(f"Motor move failed: {exc}")
+        self.motor_move_by_requested.emit(int(delta_steps), int(wait_ms))
 
     def move_motor_to(self, target_steps: int, wait_ms: int = 100) -> None:
-        """Move motor to absolute position and emit updated position."""
-        if not self._motor_ready:
+        """Queue absolute motor move in worker thread."""
+        if self.is_measurement_running:
+            self.status_changed.emit("Motor control is disabled while measurement is running")
+            return
+        if not self._motor_ready or self._motor_worker is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        try:
-            self._motor.move_to(target_steps)
-            self._motor.wait_for_stop(wait_ms)
-            pos = self._motor.get_position()
-            self.motor_position_signal.emit(pos)
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Absolute motor move failed")
-            self.status_changed.emit(f"Motor move failed: {exc}")
+        self.motor_move_to_requested.emit(int(target_steps), int(wait_ms))
 
     def set_motor_zero(self) -> None:
-        """Set current motor position as zero."""
-        if not self._motor_ready:
+        """Queue set-zero motor command."""
+        if self.is_measurement_running:
+            self.status_changed.emit("Motor control is disabled while measurement is running")
+            return
+        if not self._motor_ready or self._motor_worker is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        try:
-            self._motor.set_zero()
-            pos = self._motor.get_position()
-            self.motor_position_signal.emit(pos)
-            self.status_changed.emit("Motor zero position set")
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Set zero failed")
-            self.status_changed.emit(f"Set zero failed: {exc}")
+        self.motor_set_zero_requested.emit()
 
     def stop_motor_motion(self) -> None:
         """Stop motor immediately."""
-        if not self._motor_ready:
+        if not self._motor_ready or self._motor_worker is None:
             return
-        try:
-            self._motor.stop()
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Stop motor failed")
-            self.status_changed.emit(f"Stop motor failed: {exc}")
+        self.motor_stop_requested.emit()
 
     def start_measurement(self, settings: ScanSettings) -> None:
         """Start spectrogram measurement in background thread."""
@@ -271,6 +266,10 @@ class MainController(QObject):
         if self.is_measurement_running:
             self.status_changed.emit("Measurement is already running")
             return
+
+        if self.is_monitoring():
+            self.stop_monitoring()
+
         logger.info("Starting measurement with settings: %s", settings)
 
         self._current_measure = MeasureManager.create(
@@ -328,6 +327,7 @@ class MainController(QObject):
     def shutdown(self) -> None:
         """Stop active tasks and release device connections."""
         self.stop_monitoring()
+
         if self._worker is not None:
             self._worker.request_stop()
         if self._thread is not None and self._thread.isRunning():
@@ -335,48 +335,160 @@ class MainController(QObject):
             self._thread.quit()
             self._thread.wait(2000)
 
+        self._stop_motor_worker()
+        self._stop_lockin_worker()
+
         if self._motor is not None:
             logger.info("Shutting down motor backend")
-            self._motor.shutdown()
+            try:
+                self._motor.shutdown()
+            except Exception:  # noqa: BLE001
+                logger.exception("Motor shutdown failed")
         if self._lock_in is not None:
             logger.info("Shutting down lock-in backend")
-            self._lock_in.shutdown()
+            try:
+                self._lock_in.shutdown()
+            except Exception:  # noqa: BLE001
+                logger.exception("Lock-In shutdown failed")
 
         self._motor_ready = False
         self._lock_in_ready = False
-        self._monitor_use_case = None
         self._measure_use_case = None
         self._current_measure = None
         self._thread = None
         self._worker = None
+        self._motor = None
+        self._lock_in = None
 
-    def _poll_monitor(self) -> None:
-        if self._monitor_use_case is None:
-            return
-        try:
-            value = self._monitor_use_case.execute()
-            self.monitoring_signal.emit(value)
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Monitoring failed")
-            self.status_changed.emit(f"Monitoring error: {exc}")
-            self._monitor_timer.stop()
-            if not self._motor_timer.isActive():
-                self.monitoring_state_changed.emit(False)
+    def _request_lockin_poll(self) -> None:
+        if self._lockin_worker is not None:
+            self.lockin_poll_requested.emit()
 
-    def _poll_motor_position(self) -> None:
-        if not self._motor_ready:
-            return
-        try:
-            pos = self._motor.get_position()
-            self.motor_position_signal.emit(pos)
-        except Exception as exc:  # noqa: BLE001
-            self._last_error = str(exc)
-            logger.exception("Motor position polling failed")
-            self.status_changed.emit(f"Motor polling error: {exc}")
-            self._motor_timer.stop()
-            if not self._monitor_timer.isActive():
-                self.monitoring_state_changed.emit(False)
+    def _request_motor_poll(self) -> None:
+        if self._motor_worker is not None:
+            self.motor_poll_requested.emit()
+
+    def _build_lock_in_device(self):
+        adapter = self._config.lock_in_adapter
+        if adapter == LockInAdapterType.KEYSIGHT_VISA:
+            if not self._config.lock_in_visa_resource:
+                raise RuntimeError("VISA resource is empty")
+            return SR830VisaLockIn(
+                resource=self._config.lock_in_visa_resource,
+                visa_library=self._config.lock_in_visa_library or None,
+            )
+        if adapter in (LockInAdapterType.PROLOGIX_ETHERNET, LockInAdapterType.PROLOGIX_USB):
+            return SR830ThzdaqapiLockIn(
+                adapter_type=adapter,
+                gpib_address=self._config.lock_in_gpib_address,
+                host=self._config.lock_in_host,
+                ethernet_port=self._config.lock_in_port,
+                usb_port=self._config.lock_in_usb_port,
+            )
+        raise RuntimeError(
+            f"Unsupported Lock-In adapter '{adapter}'. "
+            "Use keysight_visa, prologix_ethernet or prologix_usb."
+        )
+
+    def _start_motor_worker(self, motor: object) -> None:
+        self._stop_motor_worker()
+
+        self._motor_worker = MotorIoWorker(motor)
+        self._motor_thread = QThread(self)
+        self._motor_worker.moveToThread(self._motor_thread)
+        self._motor_thread.finished.connect(self._motor_worker.deleteLater)
+
+        self.motor_poll_requested.connect(self._motor_worker.poll_position)
+        self.motor_move_by_requested.connect(self._motor_worker.move_by)
+        self.motor_move_to_requested.connect(self._motor_worker.move_to)
+        self.motor_set_zero_requested.connect(self._motor_worker.set_zero)
+        self.motor_stop_requested.connect(self._motor_worker.stop_motion)
+
+        self._motor_worker.position_ready.connect(self.motor_position_signal.emit)
+        self._motor_worker.command_error.connect(self._on_motor_worker_error)
+
+        self._motor_thread.start()
+
+    def _stop_motor_worker(self) -> None:
+        if self._motor_worker is not None:
+            for signal, slot in (
+                (self.motor_poll_requested, self._motor_worker.poll_position),
+                (self.motor_move_by_requested, self._motor_worker.move_by),
+                (self.motor_move_to_requested, self._motor_worker.move_to),
+                (self.motor_set_zero_requested, self._motor_worker.set_zero),
+                (self.motor_stop_requested, self._motor_worker.stop_motion),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                self._motor_worker.position_ready.disconnect(self.motor_position_signal.emit)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._motor_worker.command_error.disconnect(self._on_motor_worker_error)
+            except Exception:  # noqa: BLE001
+                pass
+
+        if self._motor_thread is not None:
+            self._motor_thread.quit()
+            self._motor_thread.wait(1500)
+
+        self._motor_thread = None
+        self._motor_worker = None
+
+    def _start_lockin_worker(self, lock_in: object) -> None:
+        self._stop_lockin_worker()
+
+        self._lockin_worker = LockInIoWorker(lock_in)
+        self._lockin_thread = QThread(self)
+        self._lockin_worker.moveToThread(self._lockin_thread)
+        self._lockin_thread.finished.connect(self._lockin_worker.deleteLater)
+
+        self.lockin_poll_requested.connect(self._lockin_worker.read_signal)
+        self._lockin_worker.signal_ready.connect(self.monitoring_signal.emit)
+        self._lockin_worker.poll_error.connect(self._on_lockin_worker_error)
+
+        self._lockin_thread.start()
+
+    def _stop_lockin_worker(self) -> None:
+        if self._lockin_worker is not None:
+            try:
+                self.lockin_poll_requested.disconnect(self._lockin_worker.read_signal)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._lockin_worker.signal_ready.disconnect(self.monitoring_signal.emit)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._lockin_worker.poll_error.disconnect(self._on_lockin_worker_error)
+            except Exception:  # noqa: BLE001
+                pass
+
+        if self._lockin_thread is not None:
+            self._lockin_thread.quit()
+            self._lockin_thread.wait(1500)
+
+        self._lockin_thread = None
+        self._lockin_worker = None
+
+    def _on_motor_worker_error(self, error: str) -> None:
+        self._last_error = error
+        logger.error(error)
+        self.status_changed.emit(error)
+        self._motor_timer.stop()
+        if not self._monitor_timer.isActive():
+            self.monitoring_state_changed.emit(False)
+
+    def _on_lockin_worker_error(self, error: str) -> None:
+        self._last_error = error
+        logger.error(error)
+        self.status_changed.emit(error)
+        self._monitor_timer.stop()
+        if not self._motor_timer.isActive():
+            self.monitoring_state_changed.emit(False)
 
     def _on_measurement_point(self, point: dict) -> None:
         if self._current_measure is None:

@@ -4,7 +4,8 @@ import types
 import unittest
 from unittest.mock import patch
 
-from fts_scanner.devices.thzdaqapi_lockin import LockInAdapterType, SR830ThzdaqapiLockIn
+from fts_scanner.devices.lockin_types import LockInAdapterType
+from fts_scanner.devices.thzdaqapi_lockin import SR830ThzdaqapiLockIn
 
 
 class _FakeAdapter:

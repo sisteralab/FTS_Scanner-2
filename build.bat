@@ -24,6 +24,8 @@ if errorlevel 1 exit /b 1
   --name "FTS_Scanner" ^
   --windowed ^
   --paths "%ROOT_DIR%\src" ^
+  --hidden-import pyvisa ^
+  --hidden-import pyvisa_py ^
   --add-data "%ROOT_DIR%\ximc;ximc" ^
   --add-data "%ROOT_DIR%\assets;assets" ^
   --icon "%ROOT_DIR%\assets\app_icon.ico" ^
