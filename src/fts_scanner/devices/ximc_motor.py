@@ -69,6 +69,43 @@ class XimcMotorDevice:
         result = self._lib.command_stop(self._device_id)
         self._expect_ok(result, "command_stop")
 
+    def start_jog(self, direction: int) -> None:
+        """Start continuous move: `-1` to left, `+1` to right."""
+        self._ensure_open()
+        if direction == 0:
+            return
+        if direction > 0:
+            result = self._lib.command_right(self._device_id)
+            self._expect_ok(result, "command_right")
+            return
+        result = self._lib.command_left(self._device_id)
+        self._expect_ok(result, "command_left")
+
+    def get_motion_params(self) -> tuple[int, int]:
+        """Read current speed and acceleration from controller."""
+        self._ensure_open()
+        move_settings = self._pyximc.move_settings_t()
+        result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
+        self._expect_ok(result, "get_move_settings")
+        return int(move_settings.Speed), int(move_settings.Accel)
+
+    def set_motion_params(self, speed: int, acceleration: int) -> None:
+        """Set speed and acceleration (deceleration follows acceleration)."""
+        self._ensure_open()
+        move_settings = self._pyximc.move_settings_t()
+        read_result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
+        self._expect_ok(read_result, "get_move_settings")
+
+        safe_speed = max(1, int(speed))
+        safe_accel = max(1, int(acceleration))
+        move_settings.Speed = safe_speed
+        move_settings.Accel = safe_accel
+        if hasattr(move_settings, "Decel"):
+            move_settings.Decel = safe_accel
+
+        write_result = self._lib.set_move_settings(self._device_id, self._pyximc.byref(move_settings))
+        self._expect_ok(write_result, "set_move_settings")
+
     def shutdown(self) -> None:
         """Close device and clear loaded handles."""
         if self._device_id is None or self._pyximc is None:

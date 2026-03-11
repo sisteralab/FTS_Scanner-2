@@ -23,6 +23,8 @@ class TestConfig(unittest.TestCase):
             cfg.lock_in_gpib_address = 12
             cfg.motor_name = "xi-com:\\\\.\\COM8"
             cfg.ximc_root = Path("./vendor/ximc")
+            cfg.motor_speed = 2222
+            cfg.motor_acceleration = 3333
             cfg.save_to_ini()
 
             loaded = AppConfig.from_project_root(root)
@@ -36,6 +38,8 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(loaded.lock_in_gpib_address, 12)
             self.assertEqual(loaded.motor_name, "xi-com:\\\\.\\COM8")
             self.assertEqual(loaded.ximc_root, root / "vendor" / "ximc")
+            self.assertEqual(loaded.motor_speed, 2222)
+            self.assertEqual(loaded.motor_acceleration, 3333)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,15 @@ class MotorDevice(Protocol):
     def stop(self) -> None:
         """Emergency stop motion."""
 
+    def start_jog(self, direction: int) -> None:
+        """Start continuous movement in direction: -1 left, +1 right."""
+
+    def get_motion_params(self) -> tuple[int, int]:
+        """Return current (speed, acceleration) settings."""
+
+    def set_motion_params(self, speed: int, acceleration: int) -> None:
+        """Apply (speed, acceleration) settings."""
+
     def shutdown(self) -> None:
         """Release all resources."""
 

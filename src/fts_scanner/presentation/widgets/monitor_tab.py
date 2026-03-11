@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
@@ -27,11 +26,7 @@ class MonitorTab(QWidget):
         self._controller = controller
 
         self._signal_samples: list[tuple[float, float]] = []
-
         self._jog_direction = 0
-        self._jog_timer = QTimer(self)
-        self._jog_timer.setInterval(120)
-        self._jog_timer.timeout.connect(self._jog_tick)
 
         layout = QVBoxLayout(self)
 
@@ -47,13 +42,23 @@ class MonitorTab(QWidget):
         motor_layout = QGridLayout(motor_box)
 
         self.motor_position_label = QLabel("0", motor_box)
-        self.jog_step_spin = QSpinBox(motor_box)
-        self.jog_step_spin.setRange(1, 5000)
-        self.jog_step_spin.setValue(200)
 
-        self.jog_left_button = QPushButton("Jog -", motor_box)
-        self.jog_right_button = QPushButton("Jog +", motor_box)
+        self.jog_left_button = QPushButton("Hold Left", motor_box)
+        self.jog_right_button = QPushButton("Hold Right", motor_box)
         self.set_zero_button = QPushButton("Set Zero", motor_box)
+        self.emergency_stop_button = QPushButton("Emergency Stop", motor_box)
+        self.emergency_stop_button.setStyleSheet("background: #b22323; color: white; font-weight: 600;")
+
+        self.speed_spin = QSpinBox(motor_box)
+        self.speed_spin.setRange(1, 5_000_000)
+        self.speed_spin.setValue(self._controller.config.motor_speed)
+
+        self.accel_spin = QSpinBox(motor_box)
+        self.accel_spin.setRange(1, 5_000_000)
+        self.accel_spin.setValue(self._controller.config.motor_acceleration)
+
+        self.apply_motion_button = QPushButton("Apply Speed/Accel", motor_box)
+        self.reload_motion_button = QPushButton("Read From Motor", motor_box)
 
         self.target_position_spin = QSpinBox(motor_box)
         self.target_position_spin.setRange(-2_000_000, 2_000_000)
@@ -61,14 +66,23 @@ class MonitorTab(QWidget):
 
         motor_layout.addWidget(QLabel("Current position (steps)"), 0, 0)
         motor_layout.addWidget(self.motor_position_label, 0, 1)
-        motor_layout.addWidget(QLabel("Jog step (steps)"), 1, 0)
-        motor_layout.addWidget(self.jog_step_spin, 1, 1)
-        motor_layout.addWidget(self.jog_left_button, 2, 0)
-        motor_layout.addWidget(self.jog_right_button, 2, 1)
-        motor_layout.addWidget(self.set_zero_button, 3, 0, 1, 2)
-        motor_layout.addWidget(QLabel("Target position"), 4, 0)
-        motor_layout.addWidget(self.target_position_spin, 4, 1)
-        motor_layout.addWidget(self.move_to_button, 5, 0, 1, 2)
+
+        motor_layout.addWidget(QLabel("Speed"), 1, 0)
+        motor_layout.addWidget(self.speed_spin, 1, 1)
+        motor_layout.addWidget(QLabel("Acceleration"), 2, 0)
+        motor_layout.addWidget(self.accel_spin, 2, 1)
+        motor_layout.addWidget(self.apply_motion_button, 3, 0)
+        motor_layout.addWidget(self.reload_motion_button, 3, 1)
+
+        motor_layout.addWidget(self.jog_left_button, 4, 0)
+        motor_layout.addWidget(self.jog_right_button, 4, 1)
+        motor_layout.addWidget(self.set_zero_button, 5, 0)
+        motor_layout.addWidget(self.emergency_stop_button, 5, 1)
+
+        motor_layout.addWidget(QLabel("Target position"), 6, 0)
+        motor_layout.addWidget(self.target_position_spin, 6, 1)
+        motor_layout.addWidget(self.move_to_button, 7, 0, 1, 2)
+
         layout.addWidget(motor_box)
 
         lockin_box = QGroupBox("Lock-In Stream", self)
@@ -102,10 +116,14 @@ class MonitorTab(QWidget):
         self.jog_right_button.released.connect(self._stop_jog)
 
         self.set_zero_button.clicked.connect(self._controller.set_motor_zero)
+        self.emergency_stop_button.clicked.connect(self._emergency_stop)
         self.move_to_button.clicked.connect(self._move_to_target)
+        self.apply_motion_button.clicked.connect(self._apply_motion_params)
+        self.reload_motion_button.clicked.connect(self._controller.read_motor_motion_params)
 
         self._controller.monitoring_signal.connect(self._on_signal)
         self._controller.motor_position_signal.connect(self._on_motor_position)
+        self._controller.motor_motion_params_signal.connect(self._on_motion_params)
         self._controller.monitoring_state_changed.connect(self._set_monitor_buttons_state)
         self._set_monitor_buttons_state(False)
 
@@ -116,25 +134,34 @@ class MonitorTab(QWidget):
 
     def _start_jog(self, direction: int) -> None:
         self._jog_direction = direction
-        self._jog_tick()
-        self._jog_timer.start()
+        self._controller.start_motor_jog(direction)
 
     def _stop_jog(self) -> None:
-        self._jog_timer.stop()
+        if self._jog_direction == 0:
+            return
         self._jog_direction = 0
         self._controller.stop_motor_motion()
 
-    def _jog_tick(self) -> None:
-        if self._jog_direction == 0:
-            return
-        step = self.jog_step_spin.value() * self._jog_direction
-        self._controller.move_motor_by(step, wait_ms=80)
+    def _emergency_stop(self) -> None:
+        self._jog_direction = 0
+        self._controller.stop_motor_motion()
 
     def _move_to_target(self) -> None:
+        self._jog_direction = 0
         self._controller.move_motor_to(self.target_position_spin.value(), wait_ms=100)
+
+    def _apply_motion_params(self) -> None:
+        self._controller.set_motor_motion_params(
+            speed=self.speed_spin.value(),
+            acceleration=self.accel_spin.value(),
+        )
 
     def _on_motor_position(self, position: int) -> None:
         self.motor_position_label.setText(str(position))
+
+    def _on_motion_params(self, speed: int, acceleration: int) -> None:
+        self.speed_spin.setValue(int(speed))
+        self.accel_spin.setValue(int(acceleration))
 
     def _on_signal(self, value: float) -> None:
         self.current_signal_label.setText(f"{value:.6f}")
@@ -156,3 +183,7 @@ class MonitorTab(QWidget):
     def _set_monitor_buttons_state(self, is_running: bool) -> None:
         self.start_monitor_button.setEnabled(not is_running)
         self.stop_monitor_button.setEnabled(is_running)
+
+    def hideEvent(self, event) -> None:  # noqa: N802, ANN001
+        self._emergency_stop()
+        super().hideEvent(event)

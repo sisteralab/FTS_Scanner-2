@@ -12,11 +12,14 @@ class MotorIoWorker(QObject):
 
     position_ready = Signal(int)
     command_error = Signal(str)
+    motion_params_ready = Signal(int, int)
+    motion_params_applied = Signal(int, int)
 
     def __init__(self, motor: object) -> None:
         super().__init__()
         self._motor = motor
         self._busy = False
+        self._is_jogging = False
 
     @Slot()
     def poll_position(self) -> None:
@@ -37,6 +40,9 @@ class MotorIoWorker(QObject):
             return
         self._busy = True
         try:
+            if self._is_jogging:
+                self._motor.stop()
+                self._is_jogging = False
             self._motor.move_by(int(delta_steps))
             self._motor.wait_for_stop(int(wait_ms))
             self.position_ready.emit(int(self._motor.get_position()))
@@ -53,6 +59,9 @@ class MotorIoWorker(QObject):
             return
         self._busy = True
         try:
+            if self._is_jogging:
+                self._motor.stop()
+                self._is_jogging = False
             self._motor.move_to(int(target_steps))
             self._motor.wait_for_stop(int(wait_ms))
             self.position_ready.emit(int(self._motor.get_position()))
@@ -69,6 +78,9 @@ class MotorIoWorker(QObject):
             return
         self._busy = True
         try:
+            if self._is_jogging:
+                self._motor.stop()
+                self._is_jogging = False
             self._motor.set_zero()
             self.position_ready.emit(int(self._motor.get_position()))
         except Exception as exc:  # noqa: BLE001
@@ -77,14 +89,61 @@ class MotorIoWorker(QObject):
         finally:
             self._busy = False
 
+    @Slot(int)
+    def start_jog(self, direction: int) -> None:
+        """Start continuous jog for as long as button is held."""
+        if self._busy:
+            return
+        if direction == 0:
+            return
+        try:
+            if self._is_jogging:
+                self._motor.stop()
+            self._motor.start_jog(int(direction))
+            self._is_jogging = True
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Start jog failed")
+            self.command_error.emit(f"Start jog failed: {exc}")
+
     @Slot()
     def stop_motion(self) -> None:
         """Stop current motor motion."""
         try:
             self._motor.stop()
+            self._is_jogging = False
+            self.position_ready.emit(int(self._motor.get_position()))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Stop motor failed")
             self.command_error.emit(f"Stop motor failed: {exc}")
+
+    @Slot()
+    def read_motion_params(self) -> None:
+        """Read speed/acceleration parameters from motor."""
+        if self._busy:
+            return
+        try:
+            speed, acceleration = self._motor.get_motion_params()
+            self.motion_params_ready.emit(int(speed), int(acceleration))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Read motion params failed")
+            self.command_error.emit(f"Read motion params failed: {exc}")
+
+    @Slot(int, int)
+    def set_motion_params(self, speed: int, acceleration: int) -> None:
+        """Apply speed/acceleration parameters to motor."""
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            self._motor.set_motion_params(int(speed), int(acceleration))
+            applied_speed, applied_accel = self._motor.get_motion_params()
+            self.motion_params_applied.emit(int(applied_speed), int(applied_accel))
+            self.motion_params_ready.emit(int(applied_speed), int(applied_accel))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Set motion params failed")
+            self.command_error.emit(f"Set motion params failed: {exc}")
+        finally:
+            self._busy = False
 
 
 class LockInIoWorker(QObject):

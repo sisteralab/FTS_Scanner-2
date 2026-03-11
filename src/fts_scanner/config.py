@@ -23,6 +23,8 @@ class AppConfig:
 
     motor_name: str | None = "xi-com:\\\\.\\COM4"
     ximc_root: Path = Path("ximc")
+    motor_speed: int = 1000
+    motor_acceleration: int = 1000
 
     default_wait_ms: int = 400
     default_pos_border_mm: float = 10.0
@@ -66,6 +68,10 @@ class AppConfig:
 
         motor_name = section.get("motor_name", self.motor_name or "")
         self.motor_name = motor_name or None
+        self.motor_speed = self._get_int(section, "motor_speed", self.motor_speed)
+        self.motor_acceleration = self._get_int(
+            section, "motor_acceleration", self.motor_acceleration
+        )
 
         ximc_raw = section.get("ximc_root", str(self.ximc_root))
         parsed_ximc = Path(ximc_raw).expanduser()
@@ -89,6 +95,8 @@ class AppConfig:
             "lock_in_visa_library": self.lock_in_visa_library,
             "motor_name": self.motor_name or "",
             "ximc_root": str(self.ximc_root),
+            "motor_speed": str(self.motor_speed),
+            "motor_acceleration": str(self.motor_acceleration),
         }
         self.settings_file.parent.mkdir(parents=True, exist_ok=True)
         with self.settings_file.open("w", encoding="utf-8") as fh:
