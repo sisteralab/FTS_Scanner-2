@@ -100,7 +100,10 @@ class MeasureManager:
         if path.suffix.lower() != ".json":
             path = path.with_suffix(".json")
 
-        path.write_text(json.dumps(results, ensure_ascii=False, indent=4), encoding="utf-8")
+        path.write_text(
+            json.dumps(results, ensure_ascii=False, indent=4, default=str),
+            encoding="utf-8",
+        )
         measure.saved = True
         measure.save(finish=False)
 
@@ -113,7 +116,10 @@ class MeasureManager:
         dump_dir = Path("dumps")
         dump_dir.mkdir(parents=True, exist_ok=True)
         filepath = dump_dir / f"dump_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
-        filepath.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+        filepath.write_text(
+            json.dumps(data, ensure_ascii=False, indent=4, default=str),
+            encoding="utf-8",
+        )
         return filepath
 
 

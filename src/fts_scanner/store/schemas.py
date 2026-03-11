@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import date, datetime, time
+from pathlib import Path
 from typing import Any
 
 
@@ -22,7 +23,29 @@ class MeasurePayload:
         payload = asdict(self)
         payload["started"] = self.started.isoformat()
         payload["finished"] = self.finished.isoformat()
-        return payload
+        return to_json_compatible(payload)
+
+
+def to_json_compatible(value: Any) -> Any:
+    """Recursively convert value into JSON-serializable representation."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if is_dataclass(value):
+        return to_json_compatible(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): to_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_json_compatible(item) for item in value]
+    if hasattr(value, "item") and callable(value.item):  # numpy-like scalar fallback
+        try:
+            return to_json_compatible(value.item())
+        except Exception:  # noqa: BLE001
+            pass
+    return str(value)
 
 
 def normalize_measure_data(measure_type: str, data: Any) -> dict[str, Any]:
@@ -36,7 +59,7 @@ def normalize_measure_data(measure_type: str, data: Any) -> dict[str, Any]:
 
     return {
         "type": measure_type,
-        "settings": data.get("settings", {}),
-        "points": points,
-        "meta": data.get("meta", {}),
+        "settings": to_json_compatible(data.get("settings", {})),
+        "points": to_json_compatible(points),
+        "meta": to_json_compatible(data.get("meta", {})),
     }

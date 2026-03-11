@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
@@ -37,7 +38,10 @@ class TestMeasureStore(unittest.TestCase):
         self.assertEqual(model.columnCount(), len(MeasureModel.ind_attr_map))
 
     def test_save_all_creates_dump(self) -> None:
-        MeasureManager.create(measure_type=MeasureType.SPECTROGRAM, data={"points": [{"x": 1}]})
+        MeasureManager.create(
+            measure_type=MeasureType.SPECTROGRAM,
+            data={"points": [{"x": 1, "ts": datetime.now()}]},
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             cwd = os.getcwd()
