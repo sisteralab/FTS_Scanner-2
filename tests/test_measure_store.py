@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime
+import json
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
@@ -53,6 +54,31 @@ class TestMeasureStore(unittest.TestCase):
                 self.assertEqual(Path(path).suffix, ".json")
             finally:
                 os.chdir(cwd)
+
+    def test_to_json_contains_quicklook_arrays(self) -> None:
+        measure = MeasureManager.create(
+            measure_type=MeasureType.SPECTROGRAM,
+            data={
+                "settings": {"step_units": 10},
+                "points": [
+                    {
+                        "index": idx,
+                        "repeat": 0,
+                        "position_steps": idx * 10,
+                        "signal": float(idx),
+                        "timestamp": datetime.now(),
+                    }
+                    for idx in range(16)
+                ],
+            },
+        )
+        payload = measure.to_json()
+        quicklook = payload["data"]["quicklook"]
+        self.assertEqual(len(quicklook["points_steps"]), 16)
+        self.assertEqual(len(quicklook["raw_signal"]), 16)
+        self.assertGreater(len(quicklook["frequency_thz"]), 0)
+        self.assertEqual(len(quicklook["frequency_thz"]), len(quicklook["spectrum"]))
+        json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

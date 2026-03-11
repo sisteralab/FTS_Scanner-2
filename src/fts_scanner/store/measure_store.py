@@ -8,7 +8,11 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QFileDialog
 
-from fts_scanner.store.schemas import MeasurePayload, normalize_measure_data
+from fts_scanner.store.schemas import (
+    MeasurePayload,
+    enrich_measure_data_for_export,
+    normalize_measure_data,
+)
 
 
 class MeasureType:
@@ -182,6 +186,7 @@ class MeasureModel:
         finished = self.finished if isinstance(self.finished, datetime) else datetime.now()
         normalized_data = normalize_measure_data(measure_type=self.measure_type, data=self.data)
         self.data = normalized_data
+        export_data = enrich_measure_data_for_export(normalized_data)
         payload = MeasurePayload(
             id=self.id,
             comment=self.comment,
@@ -189,7 +194,7 @@ class MeasureModel:
             measure=self.type_display or "",
             started=self.started,
             finished=finished,
-            data=normalized_data,
+            data=export_data,
         )
         return payload.to_json()
 

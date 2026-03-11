@@ -5,6 +5,10 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from fts_scanner.domain.models import STAGE_STEP_UM
+
 
 @dataclass(slots=True)
 class MeasurePayload:
@@ -40,6 +44,11 @@ def to_json_compatible(value: Any) -> Any:
         return {str(key): to_json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [to_json_compatible(item) for item in value]
+    if hasattr(value, "tolist") and callable(value.tolist):  # numpy array-like fallback
+        try:
+            return to_json_compatible(value.tolist())
+        except Exception:  # noqa: BLE001
+            pass
     if hasattr(value, "item") and callable(value.item):  # numpy-like scalar fallback
         try:
             return to_json_compatible(value.item())
@@ -63,3 +72,96 @@ def normalize_measure_data(measure_type: str, data: Any) -> dict[str, Any]:
         "points": to_json_compatible(points),
         "meta": to_json_compatible(data.get("meta", {})),
     }
+
+
+def enrich_measure_data_for_export(data: dict[str, Any]) -> dict[str, Any]:
+    """Add quick-plot arrays to normalized measurement data."""
+    normalized = normalize_measure_data(measure_type=str(data.get("type", "")), data=data)
+    points = normalized.get("points", [])
+    settings = normalized.get("settings", {})
+
+    quicklook = _build_quicklook(points=points, settings=settings)
+    normalized["quicklook"] = quicklook
+    return normalized
+
+
+def _build_quicklook(points: Any, settings: Any) -> dict[str, Any]:
+    if not isinstance(points, list):
+        return {
+            "points_steps": [],
+            "raw_signal": [],
+            "frequency_thz": [],
+            "spectrum": [],
+            "source_repeat": 0,
+        }
+
+    by_repeat: dict[int, list[tuple[int, float]]] = {}
+    all_positions: list[int] = []
+    all_signals: list[float] = []
+
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        position_raw = point.get("position_steps")
+        signal_raw = point.get("signal")
+        repeat_raw = point.get("repeat", 0)
+
+        try:
+            position = int(position_raw)
+            signal = float(signal_raw)
+            repeat = int(repeat_raw)
+        except (TypeError, ValueError):
+            continue
+
+        all_positions.append(position)
+        all_signals.append(signal)
+        by_repeat.setdefault(repeat, []).append((position, signal))
+
+    if by_repeat:
+        source_repeat = max(by_repeat.keys())
+        repeat_points = by_repeat[source_repeat]
+    else:
+        source_repeat = 0
+        repeat_points = []
+
+    positions = [item[0] for item in repeat_points]
+    raw_signal = [item[1] for item in repeat_points]
+    frequency_thz, spectrum = _compute_spectrum(raw_signal=raw_signal, settings=settings)
+
+    return {
+        "points_steps": positions,
+        "raw_signal": raw_signal,
+        "frequency_thz": frequency_thz,
+        "spectrum": spectrum,
+        "source_repeat": source_repeat,
+        "all_points_steps": all_positions,
+        "all_raw_signal": all_signals,
+    }
+
+
+def _compute_spectrum(raw_signal: list[float], settings: Any) -> tuple[list[float], list[float]]:
+    if len(raw_signal) < 8:
+        return [], []
+
+    step_units = 0
+    if isinstance(settings, dict):
+        try:
+            step_units = int(settings.get("step_units", 0))
+        except (TypeError, ValueError):
+            step_units = 0
+    if step_units <= 0:
+        return [], []
+
+    sample_spacing_um = step_units * STAGE_STEP_UM
+    signal_np = np.asarray(raw_signal, dtype=float)
+    if signal_np.size < 8:
+        return [], []
+
+    signal_np = signal_np - signal_np.mean()
+    window = np.hanning(signal_np.size)
+    spectrum_np = np.fft.rfft(signal_np * window)
+    magnitude_np = np.abs(spectrum_np)
+    freq_per_um = np.fft.rfftfreq(signal_np.size, d=sample_spacing_um)
+    freq_thz = freq_per_um * 299.792458
+
+    return freq_thz.tolist(), magnitude_np.tolist()
