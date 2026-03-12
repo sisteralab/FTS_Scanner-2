@@ -4,8 +4,9 @@ import logging
 import os
 import platform
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -20,99 +21,118 @@ class XimcMotorDevice:
     _pyximc: Any = None
     _lib: Any = None
     _device_id: Any = None
+    _lock: RLock = field(default_factory=RLock, repr=False)
 
     def initialize(self) -> None:
         """Load pyximc wrapper and open motor device."""
-        if self._device_id is not None:
-            return
-        logger.info("Initializing XIMC motor from: %s", self.ximc_root)
-        self._pyximc, self._lib = self._import_pyximc(self.ximc_root)
-        self._device_id = self._open_device(self.motor_name)
-        # Validation read to fail fast on invalid/opened-but-unusable handles.
-        _ = self.get_position()
+        with self._lock:
+            if self._device_id is not None:
+                return
+            logger.info("Initializing XIMC motor from: %s", self.ximc_root)
+            self._pyximc, self._lib = self._import_pyximc(self.ximc_root)
+            self._device_id = self._open_device(self.motor_name)
+            # Validation read to fail fast on invalid/opened-but-unusable handles.
+            _ = self.get_position()
 
     def move_to(self, steps: int) -> None:
         """Move to absolute position in steps."""
-        self._ensure_open()
-        result = self._lib.command_move(self._device_id, int(steps), 0)
-        self._expect_ok(result, "command_move")
+        with self._lock:
+            self._ensure_open()
+            result = self._lib.command_move(self._device_id, int(steps), 0)
+            self._expect_ok(result, "command_move")
 
     def move_by(self, delta_steps: int) -> None:
         """Move by relative amount in steps."""
-        self._ensure_open()
-        result = self._lib.command_movr(self._device_id, int(delta_steps), 0)
-        self._expect_ok(result, "command_movr")
+        with self._lock:
+            self._ensure_open()
+            result = self._lib.command_movr(self._device_id, int(delta_steps), 0)
+            self._expect_ok(result, "command_movr")
 
     def wait_for_stop(self, timeout_ms: int) -> None:
         """Wait until motor stops or timeout expires."""
-        self._ensure_open()
-        result = self._lib.command_wait_for_stop(self._device_id, int(timeout_ms))
-        self._expect_ok(result, "command_wait_for_stop")
+        with self._lock:
+            self._ensure_open()
+            result = self._lib.command_wait_for_stop(self._device_id, int(timeout_ms))
+            self._expect_ok(result, "command_wait_for_stop")
 
     def get_position(self) -> int:
         """Read current stage position in steps."""
-        self._ensure_open()
-        position = self._pyximc.get_position_t()
-        result = self._lib.get_position(self._device_id, self._pyximc.byref(position))
-        self._expect_ok(result, "get_position")
-        return int(position.Position)
+        with self._lock:
+            self._ensure_open()
+            position = self._pyximc.get_position_t()
+            result = self._lib.get_position(self._device_id, self._pyximc.byref(position))
+            self._expect_ok(result, "get_position")
+            return int(position.Position)
 
     def set_zero(self) -> None:
         """Set current hardware position as logical zero."""
-        self._ensure_open()
-        result = self._lib.command_zero(self._device_id)
-        self._expect_ok(result, "command_zero")
+        with self._lock:
+            self._ensure_open()
+            result = self._lib.command_zero(self._device_id)
+            self._expect_ok(result, "command_zero")
 
     def stop(self) -> None:
         """Stop movement immediately."""
-        self._ensure_open()
-        result = self._lib.command_stop(self._device_id)
-        self._expect_ok(result, "command_stop")
+        with self._lock:
+            self._ensure_open()
+            result = self._lib.command_stop(self._device_id)
+            self._expect_ok(result, "command_stop")
 
     def start_jog(self, direction: int) -> None:
         """Start continuous move: `-1` to left, `+1` to right."""
-        self._ensure_open()
-        if direction == 0:
-            return
-        if direction > 0:
-            result = self._lib.command_right(self._device_id)
-            self._expect_ok(result, "command_right")
-            return
-        result = self._lib.command_left(self._device_id)
-        self._expect_ok(result, "command_left")
+        with self._lock:
+            self._ensure_open()
+            if direction == 0:
+                return
+            if direction > 0:
+                result = self._lib.command_right(self._device_id)
+                self._expect_ok(result, "command_right")
+                return
+            result = self._lib.command_left(self._device_id)
+            self._expect_ok(result, "command_left")
 
     def get_motion_params(self) -> tuple[int, int]:
         """Read current speed and acceleration from controller."""
-        self._ensure_open()
-        move_settings = self._pyximc.move_settings_t()
-        result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
-        self._expect_ok(result, "get_move_settings")
-        return int(move_settings.Speed), int(move_settings.Accel)
+        with self._lock:
+            self._ensure_open()
+            move_settings = self._pyximc.move_settings_t()
+            result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
+            self._expect_ok(result, "get_move_settings")
+            return int(move_settings.Speed), int(move_settings.Accel)
 
     def set_motion_params(self, speed: int, acceleration: int) -> None:
         """Set speed and acceleration (deceleration follows acceleration)."""
-        self._ensure_open()
-        move_settings = self._pyximc.move_settings_t()
-        read_result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
-        self._expect_ok(read_result, "get_move_settings")
+        with self._lock:
+            self._ensure_open()
+            move_settings = self._pyximc.move_settings_t()
+            read_result = self._lib.get_move_settings(self._device_id, self._pyximc.byref(move_settings))
+            self._expect_ok(read_result, "get_move_settings")
 
-        safe_speed = max(1, int(speed))
-        safe_accel = max(1, int(acceleration))
-        move_settings.Speed = safe_speed
-        move_settings.Accel = safe_accel
-        if hasattr(move_settings, "Decel"):
-            move_settings.Decel = safe_accel
+            safe_speed = max(1, int(speed))
+            safe_accel = max(1, int(acceleration))
+            move_settings.Speed = safe_speed
+            move_settings.Accel = safe_accel
+            if hasattr(move_settings, "Decel"):
+                move_settings.Decel = safe_accel
 
-        write_result = self._lib.set_move_settings(self._device_id, self._pyximc.byref(move_settings))
-        self._expect_ok(write_result, "set_move_settings")
+            write_result = self._lib.set_move_settings(self._device_id, self._pyximc.byref(move_settings))
+            self._expect_ok(write_result, "set_move_settings")
 
     def shutdown(self) -> None:
         """Close device and clear loaded handles."""
-        if self._device_id is None or self._pyximc is None:
-            return
-        logger.info("Closing XIMC motor device")
-        self._lib.close_device(self._pyximc.byref(self._pyximc.cast(self._device_id, self._pyximc.POINTER(self._pyximc.c_int))))
-        self._device_id = None
+        with self._lock:
+            if self._device_id is None or self._pyximc is None:
+                return
+            logger.info("Closing XIMC motor device")
+            self._lib.close_device(
+                self._pyximc.byref(
+                    self._pyximc.cast(
+                        self._device_id,
+                        self._pyximc.POINTER(self._pyximc.c_int),
+                    )
+                )
+            )
+            self._device_id = None
 
     def _open_device(self, name: str | None) -> Any:
         devenum = self._lib.enumerate_devices(self._pyximc.EnumerateFlags.ENUMERATE_PROBE, None)

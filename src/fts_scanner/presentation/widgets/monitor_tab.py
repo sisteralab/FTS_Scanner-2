@@ -42,6 +42,7 @@ class MonitorTab(QWidget):
         motor_layout = QGridLayout(motor_box)
 
         self.motor_position_label = QLabel("0", motor_box)
+        self.motor_state_label = QLabel("Not initialized", motor_box)
 
         self.jog_left_button = QPushButton("Hold Left", motor_box)
         self.jog_right_button = QPushButton("Hold Right", motor_box)
@@ -66,22 +67,24 @@ class MonitorTab(QWidget):
 
         motor_layout.addWidget(QLabel("Current position (steps)"), 0, 0)
         motor_layout.addWidget(self.motor_position_label, 0, 1)
+        motor_layout.addWidget(QLabel("Motor state"), 1, 0)
+        motor_layout.addWidget(self.motor_state_label, 1, 1)
 
-        motor_layout.addWidget(QLabel("Speed"), 1, 0)
-        motor_layout.addWidget(self.speed_spin, 1, 1)
-        motor_layout.addWidget(QLabel("Acceleration"), 2, 0)
-        motor_layout.addWidget(self.accel_spin, 2, 1)
-        motor_layout.addWidget(self.apply_motion_button, 3, 0)
-        motor_layout.addWidget(self.reload_motion_button, 3, 1)
+        motor_layout.addWidget(QLabel("Speed"), 2, 0)
+        motor_layout.addWidget(self.speed_spin, 2, 1)
+        motor_layout.addWidget(QLabel("Acceleration"), 3, 0)
+        motor_layout.addWidget(self.accel_spin, 3, 1)
+        motor_layout.addWidget(self.apply_motion_button, 4, 0)
+        motor_layout.addWidget(self.reload_motion_button, 4, 1)
 
-        motor_layout.addWidget(self.jog_left_button, 4, 0)
-        motor_layout.addWidget(self.jog_right_button, 4, 1)
-        motor_layout.addWidget(self.set_zero_button, 5, 0)
-        motor_layout.addWidget(self.emergency_stop_button, 5, 1)
+        motor_layout.addWidget(self.jog_left_button, 5, 0)
+        motor_layout.addWidget(self.jog_right_button, 5, 1)
+        motor_layout.addWidget(self.set_zero_button, 6, 0)
+        motor_layout.addWidget(self.emergency_stop_button, 6, 1)
 
-        motor_layout.addWidget(QLabel("Target position"), 6, 0)
-        motor_layout.addWidget(self.target_position_spin, 6, 1)
-        motor_layout.addWidget(self.move_to_button, 7, 0, 1, 2)
+        motor_layout.addWidget(QLabel("Target position"), 7, 0)
+        motor_layout.addWidget(self.target_position_spin, 7, 1)
+        motor_layout.addWidget(self.move_to_button, 8, 0, 1, 2)
 
         layout.addWidget(motor_box)
 
@@ -123,9 +126,14 @@ class MonitorTab(QWidget):
 
         self._controller.monitoring_signal.connect(self._on_signal)
         self._controller.motor_position_signal.connect(self._on_motor_position)
+        self._controller.motor_state_signal.connect(self._on_motor_state)
         self._controller.motor_motion_params_signal.connect(self._on_motion_params)
         self._controller.monitoring_state_changed.connect(self._set_monitor_buttons_state)
+        self._controller.measurement_started.connect(lambda: self._set_motor_controls_enabled(False))
+        self._controller.measurement_finished.connect(lambda: self._set_motor_controls_enabled(True))
+        self._controller.measurement_failed.connect(lambda _err: self._set_motor_controls_enabled(True))
         self._set_monitor_buttons_state(False)
+        self._set_motor_controls_enabled(True)
 
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
@@ -133,8 +141,9 @@ class MonitorTab(QWidget):
         self._controller.start_monitoring()
 
     def _start_jog(self, direction: int) -> None:
-        self._jog_direction = direction
-        self._controller.start_motor_jog(direction)
+        started = self._controller.start_motor_jog(direction)
+        if started:
+            self._jog_direction = direction
 
     def _stop_jog(self) -> None:
         if self._jog_direction == 0:
@@ -158,6 +167,9 @@ class MonitorTab(QWidget):
 
     def _on_motor_position(self, position: int) -> None:
         self.motor_position_label.setText(str(position))
+
+    def _on_motor_state(self, state: str) -> None:
+        self.motor_state_label.setText(state)
 
     def _on_motion_params(self, speed: int, acceleration: int) -> None:
         self.speed_spin.setValue(int(speed))
@@ -183,6 +195,15 @@ class MonitorTab(QWidget):
     def _set_monitor_buttons_state(self, is_running: bool) -> None:
         self.start_monitor_button.setEnabled(not is_running)
         self.stop_monitor_button.setEnabled(is_running)
+
+    def _set_motor_controls_enabled(self, enabled: bool) -> None:
+        self.jog_left_button.setEnabled(enabled)
+        self.jog_right_button.setEnabled(enabled)
+        self.set_zero_button.setEnabled(enabled)
+        self.move_to_button.setEnabled(enabled)
+        self.target_position_spin.setEnabled(enabled)
+        self.apply_motion_button.setEnabled(enabled)
+        self.reload_motion_button.setEnabled(enabled)
 
     def hideEvent(self, event) -> None:  # noqa: N802, ANN001
         self._emergency_stop()

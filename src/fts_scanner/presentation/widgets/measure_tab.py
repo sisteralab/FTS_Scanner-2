@@ -94,6 +94,8 @@ class MeasureTab(QWidget):
         self.resume_button = QPushButton("Resume", actions_box)
         self.stop_button = QPushButton("Stop", actions_box)
         self.save_all_button = QPushButton("Save all", actions_box)
+        self.motor_position_label = QLabel("--", actions_box)
+        self.motor_state_label = QLabel("Not initialized", actions_box)
 
         self.progress_bar = QProgressBar(actions_box)
         self.progress_bar.setRange(0, 1)
@@ -105,6 +107,10 @@ class MeasureTab(QWidget):
         actions_layout.addWidget(self.stop_button, 1, 1)
         actions_layout.addWidget(self.progress_bar, 2, 0, 1, 2)
         actions_layout.addWidget(self.save_all_button, 3, 0, 1, 2)
+        actions_layout.addWidget(QLabel("Motor position (steps)", actions_box), 4, 0)
+        actions_layout.addWidget(self.motor_position_label, 4, 1)
+        actions_layout.addWidget(QLabel("Motor state", actions_box), 5, 0)
+        actions_layout.addWidget(self.motor_state_label, 5, 1)
 
         left_panel.addWidget(actions_box)
         left_panel.addStretch(1)
@@ -127,7 +133,7 @@ class MeasureTab(QWidget):
         self.spectrum_plot = pg.PlotWidget(self)
         self.spectrum_plot.setBackground("w")
         self.spectrum_plot.setTitle("Spectrum (FFT)")
-        self.spectrum_plot.setLabel("left", "Magnitude")
+        self.spectrum_plot.setLabel("left", "Amplitude (sqrt|FFT|)")
         self.spectrum_plot.setLabel("bottom", "Frequency (THz, approx)")
         self.spectrum_plot.showGrid(x=True, y=True)
         self._spectrum_curve = self.spectrum_plot.plot([], [], pen=pg.mkPen(color=(0, 100, 180), width=2))
@@ -157,6 +163,8 @@ class MeasureTab(QWidget):
         self._controller.measurement_point.connect(self._on_measurement_point)
         self._controller.measurement_finished.connect(self._on_measurement_finished)
         self._controller.measurement_failed.connect(self._on_measurement_failed)
+        self._controller.motor_position_signal.connect(self._on_motor_position)
+        self._controller.motor_state_signal.connect(self._on_motor_state)
 
         self._update_summary_labels()
         self._set_measure_buttons(running=False)
@@ -227,6 +235,12 @@ class MeasureTab(QWidget):
         self.resume_button.setEnabled(running)
         self.stop_button.setEnabled(running)
 
+    def _on_motor_position(self, position: int) -> None:
+        self.motor_position_label.setText(str(position))
+
+    def _on_motor_state(self, state: str) -> None:
+        self.motor_state_label.setText(state)
+
     def _update_spectrum(self) -> None:
         if len(self._measurement_y) < 8 or self._active_settings is None:
             self._spectrum_curve.setData([], [])
@@ -236,9 +250,11 @@ class MeasureTab(QWidget):
         signal = signal - signal.mean()
         window = np.hanning(signal.size)
         spectrum = np.fft.rfft(signal * window)
-        magnitude = np.abs(spectrum)
+        magnitude_raw = np.abs(spectrum)
+        magnitude = np.sqrt(np.clip(magnitude_raw, 0.0, None))
 
-        sample_spacing_um = self._active_settings.step_units * STAGE_STEP_UM
+        # Michelson geometry: optical path difference is 2x mirror travel.
+        sample_spacing_um = self._active_settings.step_units * STAGE_STEP_UM * 2.0
         freq_per_um = np.fft.rfftfreq(signal.size, d=sample_spacing_um)
         freq_thz = freq_per_um * 299.792458
         self._spectrum_curve.setData(freq_thz.tolist(), magnitude.tolist())

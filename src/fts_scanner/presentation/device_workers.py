@@ -12,6 +12,7 @@ class MotorIoWorker(QObject):
 
     position_ready = Signal(int)
     command_error = Signal(str)
+    motion_state_changed = Signal(str)
     motion_params_ready = Signal(int, int)
     motion_params_applied = Signal(int, int)
 
@@ -39,6 +40,7 @@ class MotorIoWorker(QObject):
         if self._busy:
             return
         self._busy = True
+        self.motion_state_changed.emit("Moving (relative)")
         try:
             if self._is_jogging:
                 self._motor.stop()
@@ -46,9 +48,11 @@ class MotorIoWorker(QObject):
             self._motor.move_by(int(delta_steps))
             self._motor.wait_for_stop(int(wait_ms))
             self.position_ready.emit(int(self._motor.get_position()))
+            self.motion_state_changed.emit("Stopped")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Relative motor move failed")
             self.command_error.emit(f"Motor move failed: {exc}")
+            self.motion_state_changed.emit("Error")
         finally:
             self._busy = False
 
@@ -58,6 +62,7 @@ class MotorIoWorker(QObject):
         if self._busy:
             return
         self._busy = True
+        self.motion_state_changed.emit(f"Moving to {int(target_steps)}")
         try:
             if self._is_jogging:
                 self._motor.stop()
@@ -65,9 +70,11 @@ class MotorIoWorker(QObject):
             self._motor.move_to(int(target_steps))
             self._motor.wait_for_stop(int(wait_ms))
             self.position_ready.emit(int(self._motor.get_position()))
+            self.motion_state_changed.emit("Stopped")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Absolute motor move failed")
             self.command_error.emit(f"Motor move failed: {exc}")
+            self.motion_state_changed.emit("Error")
         finally:
             self._busy = False
 
@@ -77,15 +84,18 @@ class MotorIoWorker(QObject):
         if self._busy:
             return
         self._busy = True
+        self.motion_state_changed.emit("Setting zero")
         try:
             if self._is_jogging:
                 self._motor.stop()
                 self._is_jogging = False
             self._motor.set_zero()
             self.position_ready.emit(int(self._motor.get_position()))
+            self.motion_state_changed.emit("Stopped")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Set zero failed")
             self.command_error.emit(f"Set zero failed: {exc}")
+            self.motion_state_changed.emit("Error")
         finally:
             self._busy = False
 
@@ -101,9 +111,14 @@ class MotorIoWorker(QObject):
                 self._motor.stop()
             self._motor.start_jog(int(direction))
             self._is_jogging = True
+            if direction > 0:
+                self.motion_state_changed.emit("Jogging right")
+            else:
+                self.motion_state_changed.emit("Jogging left")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Start jog failed")
             self.command_error.emit(f"Start jog failed: {exc}")
+            self.motion_state_changed.emit("Error")
 
     @Slot()
     def stop_motion(self) -> None:
@@ -112,9 +127,11 @@ class MotorIoWorker(QObject):
             self._motor.stop()
             self._is_jogging = False
             self.position_ready.emit(int(self._motor.get_position()))
+            self.motion_state_changed.emit("Stopped")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Stop motor failed")
             self.command_error.emit(f"Stop motor failed: {exc}")
+            self.motion_state_changed.emit("Error")
 
     @Slot()
     def read_motion_params(self) -> None:

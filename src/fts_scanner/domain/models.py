@@ -35,7 +35,8 @@ class ScanSettings:
     @property
     def resolution_thz(self) -> float:
         """Rough spectral resolution estimate from legacy formula."""
-        return round(30.0 / self.step_units, 2)
+        # Optical path difference in Michelson scheme is 2x mirror travel.
+        return round(15.0 / self.step_units, 2)
 
 
 @dataclass(slots=True)

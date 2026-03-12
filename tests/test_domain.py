@@ -18,7 +18,7 @@ class TestDomainModels(unittest.TestCase):
         self.assertEqual(settings.start_steps, -4000)
         self.assertEqual(settings.total_span_steps, 8000)
         self.assertEqual(settings.point_count, 801)
-        self.assertEqual(settings.resolution_thz, 3.0)
+        self.assertEqual(settings.resolution_thz, 1.5)
 
 
 if __name__ == "__main__":

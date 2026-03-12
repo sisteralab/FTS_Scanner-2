@@ -29,6 +29,7 @@ class MainController(QObject):
     monitoring_state_changed = Signal(bool)
     monitoring_signal = Signal(float)
     motor_position_signal = Signal(int)
+    motor_state_signal = Signal(str)
     motor_motion_params_signal = Signal(int, int)
     measurement_point = Signal(dict)
     measurement_started = Signal()
@@ -76,6 +77,7 @@ class MainController(QObject):
         self._worker: MeasurementWorker | None = None
         self._current_measure: MeasureModel | None = None
         self._last_error: str | None = None
+        self._motor_state: str = "Not initialized"
 
     @property
     def is_measurement_running(self) -> bool:
@@ -159,11 +161,14 @@ class MainController(QObject):
             pos = self._motor.get_position()
             self.motor_position_signal.emit(pos)
             self._start_motor_worker(self._motor)
+            self._motor_timer.start()
+            self._set_motor_state("Stopped")
             self.read_motor_motion_params()
             motor_message = f"Motor connected at position {pos} steps"
         except Exception as exc:  # noqa: BLE001
             self._motor_ready = False
             self._last_error = str(exc)
+            self._set_motor_state("Error")
             motor_message = f"Motor init failed: {exc}"
             logger.exception("Motor initialization failed")
 
@@ -196,36 +201,36 @@ class MainController(QObject):
         logger.info("Setup result. motor_ok=%s lockin_ok=%s", self._motor_ready, self._lock_in_ready)
 
     def start_monitoring(self) -> None:
-        """Enable periodic lock-in and motor polling."""
+        """Enable periodic lock-in polling."""
+        if self.is_measurement_running:
+            self.status_changed.emit("Monitoring is unavailable while measurement is running")
+            return
         if self.is_monitoring():
             self.status_changed.emit("Monitoring already running")
             return
-        if not self._motor_ready and not self._lock_in_ready:
+        if not self._lock_in_ready:
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
 
         if self._lock_in_ready and self._lockin_worker is not None:
             self._monitor_timer.start()
-        if self._motor_ready and self._motor_worker is not None:
-            self._motor_timer.start()
 
         logger.info("Monitoring started")
         self.status_changed.emit("Monitoring started")
         self.monitoring_state_changed.emit(True)
 
     def stop_monitoring(self) -> None:
-        """Disable periodic lock-in and motor polling."""
+        """Disable periodic lock-in polling."""
         was_running = self.is_monitoring()
         self._monitor_timer.stop()
-        self._motor_timer.stop()
         if was_running:
             logger.info("Monitoring stopped")
             self.status_changed.emit("Monitoring stopped")
             self.monitoring_state_changed.emit(False)
 
     def is_monitoring(self) -> bool:
-        """Return True if monitor timers are active."""
-        return self._monitor_timer.isActive() or self._motor_timer.isActive()
+        """Return True if lock-in monitor timer is active."""
+        return self._monitor_timer.isActive()
 
     def move_motor_by(self, delta_steps: int, wait_ms: int = 20) -> None:
         """Queue relative motor move in worker thread."""
@@ -263,17 +268,18 @@ class MainController(QObject):
             return
         self.motor_stop_requested.emit()
 
-    def start_motor_jog(self, direction: int) -> None:
+    def start_motor_jog(self, direction: int) -> bool:
         """Start continuous motor jog while control is held."""
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
-            return
+            return False
         if not self._motor_ready or self._motor_worker is None:
             self.status_changed.emit("Motor is not initialized")
-            return
+            return False
         if direction == 0:
-            return
+            return False
         self.motor_start_jog_requested.emit(1 if direction > 0 else -1)
+        return True
 
     def read_motor_motion_params(self) -> None:
         """Request current speed/acceleration from motor."""
@@ -320,6 +326,7 @@ class MainController(QObject):
 
         self._thread.started.connect(self._worker.run)
         self._worker.point_acquired.connect(self._on_measurement_point)
+        self._worker.state_changed.connect(self._on_measurement_motor_state)
         self._worker.completed.connect(self._on_measurement_completed)
         self._worker.failed.connect(self._on_measurement_failed)
 
@@ -330,6 +337,7 @@ class MainController(QObject):
         self._thread.finished.connect(self._cleanup_thread_objects)
 
         self.measurement_started.emit()
+        self._set_motor_state("Measurement running")
         self.status_changed.emit("Measurement started")
         self._thread.start()
 
@@ -360,6 +368,7 @@ class MainController(QObject):
     def shutdown(self) -> None:
         """Stop active tasks and release device connections."""
         self.stop_monitoring()
+        self._motor_timer.stop()
 
         if self._worker is not None:
             self._worker.request_stop()
@@ -441,6 +450,7 @@ class MainController(QObject):
         self.motor_write_motion_requested.connect(self._motor_worker.set_motion_params)
 
         self._motor_worker.position_ready.connect(self.motor_position_signal.emit)
+        self._motor_worker.motion_state_changed.connect(self._set_motor_state)
         self._motor_worker.command_error.connect(self._on_motor_worker_error)
         self._motor_worker.motion_params_ready.connect(self._on_motor_motion_params_ready)
         self._motor_worker.motion_params_applied.connect(self._on_motor_motion_params_applied)
@@ -465,6 +475,10 @@ class MainController(QObject):
                     pass
             try:
                 self._motor_worker.position_ready.disconnect(self.motor_position_signal.emit)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._motor_worker.motion_state_changed.disconnect(self._set_motor_state)
             except Exception:  # noqa: BLE001
                 pass
             try:
@@ -530,16 +544,14 @@ class MainController(QObject):
         logger.error(error)
         self.status_changed.emit(error)
         self._motor_timer.stop()
-        if not self._monitor_timer.isActive():
-            self.monitoring_state_changed.emit(False)
+        self._set_motor_state("Error")
 
     def _on_lockin_worker_error(self, error: str) -> None:
         self._last_error = error
         logger.error(error)
         self.status_changed.emit(error)
         self._monitor_timer.stop()
-        if not self._motor_timer.isActive():
-            self.monitoring_state_changed.emit(False)
+        self.monitoring_state_changed.emit(False)
 
     def _on_motor_motion_params_ready(self, speed: int, acceleration: int) -> None:
         self._config.motor_speed = int(speed)
@@ -573,6 +585,7 @@ class MainController(QObject):
             self._current_measure.data.setdefault("meta", {})["status"] = "completed"
             self._current_measure.save(finish=True)
         logger.info("Measurement completed")
+        self._set_motor_state("Stopped")
         self.status_changed.emit("Measurement completed")
         self.measurement_finished.emit()
 
@@ -583,6 +596,7 @@ class MainController(QObject):
             self._current_measure.save(finish=True)
         self._last_error = error
         logger.error("Measurement failed: %s", error)
+        self._set_motor_state("Error")
         self.status_changed.emit(f"Measurement failed: {error}")
         self.measurement_failed.emit(error)
 
@@ -590,3 +604,12 @@ class MainController(QObject):
         logger.info("Measurement thread cleanup")
         self._thread = None
         self._worker = None
+
+    def _on_measurement_motor_state(self, state: str) -> None:
+        self._set_motor_state(state)
+
+    def _set_motor_state(self, state: str) -> None:
+        if state == self._motor_state:
+            return
+        self._motor_state = state
+        self.motor_state_signal.emit(state)

@@ -15,6 +15,7 @@ class MeasurementWorker(QObject):
     """Background worker that runs scan use-case in a QThread."""
 
     point_acquired = Signal(dict)
+    state_changed = Signal(str)
     completed = Signal()
     failed = Signal(str)
 
@@ -34,6 +35,7 @@ class MeasurementWorker(QObject):
                 settings=self._settings,
                 should_stop=self._should_stop,
                 should_pause=self._should_pause,
+                on_state=self._emit_state,
             ):
                 self.point_acquired.emit(asdict(point))
             logger.info("Measurement worker completed")
@@ -59,3 +61,6 @@ class MeasurementWorker(QObject):
 
     def _should_pause(self) -> bool:
         return self._is_paused
+
+    def _emit_state(self, state: str) -> None:
+        self.state_changed.emit(state)

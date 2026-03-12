@@ -92,6 +92,7 @@ def _build_quicklook(points: Any, settings: Any) -> dict[str, Any]:
             "raw_signal": [],
             "frequency_thz": [],
             "spectrum": [],
+            "spectrum_raw": [],
             "source_repeat": 0,
         }
 
@@ -126,22 +127,23 @@ def _build_quicklook(points: Any, settings: Any) -> dict[str, Any]:
 
     positions = [item[0] for item in repeat_points]
     raw_signal = [item[1] for item in repeat_points]
-    frequency_thz, spectrum = _compute_spectrum(raw_signal=raw_signal, settings=settings)
+    frequency_thz, spectrum, spectrum_raw = _compute_spectrum(raw_signal=raw_signal, settings=settings)
 
     return {
         "points_steps": positions,
         "raw_signal": raw_signal,
         "frequency_thz": frequency_thz,
         "spectrum": spectrum,
+        "spectrum_raw": spectrum_raw,
         "source_repeat": source_repeat,
         "all_points_steps": all_positions,
         "all_raw_signal": all_signals,
     }
 
 
-def _compute_spectrum(raw_signal: list[float], settings: Any) -> tuple[list[float], list[float]]:
+def _compute_spectrum(raw_signal: list[float], settings: Any) -> tuple[list[float], list[float], list[float]]:
     if len(raw_signal) < 8:
-        return [], []
+        return [], [], []
 
     step_units = 0
     if isinstance(settings, dict):
@@ -150,18 +152,20 @@ def _compute_spectrum(raw_signal: list[float], settings: Any) -> tuple[list[floa
         except (TypeError, ValueError):
             step_units = 0
     if step_units <= 0:
-        return [], []
+        return [], [], []
 
-    sample_spacing_um = step_units * STAGE_STEP_UM
+    # Michelson geometry: optical path difference is 2x mirror travel.
+    sample_spacing_um = step_units * STAGE_STEP_UM * 2.0
     signal_np = np.asarray(raw_signal, dtype=float)
     if signal_np.size < 8:
-        return [], []
+        return [], [], []
 
     signal_np = signal_np - signal_np.mean()
     window = np.hanning(signal_np.size)
     spectrum_np = np.fft.rfft(signal_np * window)
-    magnitude_np = np.abs(spectrum_np)
+    magnitude_raw_np = np.abs(spectrum_np)
+    magnitude_np = np.sqrt(np.clip(magnitude_raw_np, 0.0, None))
     freq_per_um = np.fft.rfftfreq(signal_np.size, d=sample_spacing_um)
     freq_thz = freq_per_um * 299.792458
 
-    return freq_thz.tolist(), magnitude_np.tolist()
+    return freq_thz.tolist(), magnitude_np.tolist(), magnitude_raw_np.tolist()

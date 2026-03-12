@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
@@ -78,6 +79,15 @@ class TestMeasureStore(unittest.TestCase):
         self.assertEqual(len(quicklook["raw_signal"]), 16)
         self.assertGreater(len(quicklook["frequency_thz"]), 0)
         self.assertEqual(len(quicklook["frequency_thz"]), len(quicklook["spectrum"]))
+        self.assertEqual(len(quicklook["frequency_thz"]), len(quicklook["spectrum_raw"]))
+        self.assertAlmostEqual(
+            quicklook["spectrum"][1],
+            math.sqrt(quicklook["spectrum_raw"][1]),
+            places=8,
+        )
+        # OPD uses factor 2 => first bin is c / (N * 2 * step_um).
+        expected_bin_1_thz = 299.792458 / (16 * 2 * 10 * 2.5)
+        self.assertAlmostEqual(quicklook["frequency_thz"][1], expected_bin_1_thz, places=9)
         json.dumps(payload, ensure_ascii=False, indent=2)
 
 
