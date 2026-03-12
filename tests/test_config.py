@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,22 @@ from fts_scanner.devices.lockin_types import LockInAdapterType
 
 
 class TestConfig(unittest.TestCase):
+    def test_default_ximc_path_is_from_current_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            run_dir = Path(tmp) / "run_here"
+            root.mkdir(parents=True, exist_ok=True)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            cwd = os.getcwd()
+            try:
+                os.chdir(run_dir)
+                cfg = AppConfig.from_project_root(root)
+            finally:
+                os.chdir(cwd)
+
+            self.assertEqual(cfg.settings_file, root / "settings.ini")
+            self.assertEqual(cfg.ximc_root.resolve(), (run_dir / "ximc").resolve())
+
     def test_save_and_load_ini_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

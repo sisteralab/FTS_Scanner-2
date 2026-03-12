@@ -38,7 +38,7 @@ class AppConfig:
     def from_project_root(cls, project_root: Path) -> "AppConfig":
         """Build config and load persisted settings from project root."""
         cfg = cls(
-            ximc_root=project_root / "ximc",
+            ximc_root=Path.cwd() / "ximc",
             settings_file=project_root / "settings.ini",
         )
         cfg.load_from_ini()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -68,6 +69,12 @@ class SetupTab(QWidget):
 
         self.ximc_path_edit = QLineEdit(conn_box)
         self.ximc_path_edit.setText(str(self._controller.config.ximc_root))
+        self.ximc_browse_button = QPushButton("Browse...", conn_box)
+        ximc_row_widget = QWidget(conn_box)
+        ximc_row_layout = QHBoxLayout(ximc_row_widget)
+        ximc_row_layout.setContentsMargins(0, 0, 0, 0)
+        ximc_row_layout.addWidget(self.ximc_path_edit, 1)
+        ximc_row_layout.addWidget(self.ximc_browse_button, 0)
 
         self._conn_form.addRow(self.simulation_checkbox)
         self._conn_form.addRow("Lock-In adapter", self.lockin_adapter_combo)
@@ -78,7 +85,7 @@ class SetupTab(QWidget):
         self._conn_form.addRow("VISA resource", self.lockin_visa_resource_edit)
         self._conn_form.addRow("VISA library", self.lockin_visa_library_edit)
         self._conn_form.addRow("Motor name", self.motor_name_edit)
-        self._conn_form.addRow("XIMC path", self.ximc_path_edit)
+        self._conn_form.addRow("XIMC path", ximc_row_widget)
 
         layout.addWidget(conn_box)
 
@@ -101,6 +108,7 @@ class SetupTab(QWidget):
         layout.addStretch(1)
 
         self.init_button.clicked.connect(self._on_initialize_clicked)
+        self.ximc_browse_button.clicked.connect(self._on_browse_ximc)
         self.lockin_adapter_combo.currentIndexChanged.connect(self._update_adapter_fields)
         self.simulation_checkbox.toggled.connect(self._update_adapter_fields)
         self._controller.setup_status.connect(self._on_setup_status)
@@ -141,6 +149,12 @@ class SetupTab(QWidget):
         if label is not None:
             label.setVisible(visible)
         field.setVisible(visible)
+
+    def _on_browse_ximc(self) -> None:
+        current = self.ximc_path_edit.text().strip() or "."
+        selected = QFileDialog.getExistingDirectory(self, "Select XIMC folder", current)
+        if selected:
+            self.ximc_path_edit.setText(selected)
 
     def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, message: str) -> None:
         self.motor_status_label.setText("Connected" if motor_ok else "Failed")
