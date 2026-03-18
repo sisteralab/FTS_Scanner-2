@@ -128,7 +128,7 @@ class MeasureTab(QWidget):
         self.spectrum_plot.setBackground("w")
         self.spectrum_plot.setTitle("Spectrum (FFT)")
         self.spectrum_plot.setLabel("left", "Magnitude")
-        self.spectrum_plot.setLabel("bottom", "Frequency (THz, approx)")
+        self.spectrum_plot.setLabel("bottom", "Frequency (GHz, approx)")
         self.spectrum_plot.showGrid(x=True, y=True)
         self._spectrum_curve = self.spectrum_plot.plot([], [], pen=pg.mkPen(color=(0, 100, 180), width=2))
         plots.addWidget(self.spectrum_plot, 1)
@@ -240,7 +240,7 @@ class MeasureTab(QWidget):
 
         sample_spacing_um = self._active_settings.step_units * STAGE_STEP_UM
         freq_per_um = np.fft.rfftfreq(signal.size, d=sample_spacing_um)
-        freq_thz = freq_per_um * 299.792458
+        freq_thz = freq_per_um * 299.792458 / 2
         self._spectrum_curve.setData(freq_thz.tolist(), magnitude.tolist())
 
     def _on_save_all(self) -> None:
