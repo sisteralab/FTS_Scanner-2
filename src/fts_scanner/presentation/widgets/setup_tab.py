@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -84,6 +86,7 @@ class SetupTab(QWidget):
 
         actions = QHBoxLayout()
         self.init_button = QPushButton("Initialize / Test", self)
+        self.init_button.setIcon(self._std_icon("SP_DialogApplyButton"))
         actions.addWidget(self.init_button)
         actions.addStretch(1)
         layout.addLayout(actions)
@@ -106,6 +109,8 @@ class SetupTab(QWidget):
         self._controller.setup_status.connect(self._on_setup_status)
 
         self._update_adapter_fields()
+        self._set_status_chip(self.motor_status_label, False)
+        self._set_status_chip(self.lockin_status_label, False)
 
     def _on_initialize_clicked(self) -> None:
         self._controller.initialize_devices(
@@ -145,10 +150,22 @@ class SetupTab(QWidget):
     def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, message: str) -> None:
         self.motor_status_label.setText("Connected" if motor_ok else "Failed")
         self.lockin_status_label.setText("Connected" if lockin_ok else "Failed")
-        self.motor_status_label.setStyleSheet(
-            "color: #1e7f35;" if motor_ok else "color: #b22323;"
-        )
-        self.lockin_status_label.setStyleSheet(
-            "color: #1e7f35;" if lockin_ok else "color: #b22323;"
-        )
+        self._set_status_chip(self.motor_status_label, motor_ok)
+        self._set_status_chip(self.lockin_status_label, lockin_ok)
         self.summary_label.setText(message)
+
+    def _set_status_chip(self, label: QLabel, ok: bool) -> None:
+        if ok:
+            bg, border, fg = "#e8f7eb", "#b6e0bd", "#1e6a2f"
+        else:
+            bg, border, fg = "#ffe8e8", "#f2b2b2", "#8c1d1d"
+        label.setStyleSheet(
+            f"background: {bg}; border: 1px solid {border}; border-radius: 7px; "
+            f"padding: 3px 8px; color: {fg}; font-weight: 600;"
+        )
+
+    def _std_icon(self, name: str) -> QIcon:
+        enum_item = getattr(QStyle.StandardPixmap, name, None)
+        if enum_item is None:
+            return QIcon()
+        return self.style().standardIcon(enum_item)

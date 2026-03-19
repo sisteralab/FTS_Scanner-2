@@ -3,14 +3,15 @@ from __future__ import annotations
 import time
 
 import pyqtgraph as pg
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -33,59 +34,96 @@ class MonitorTab(QWidget):
         actions = QHBoxLayout()
         self.start_monitor_button = QPushButton("Start Monitoring", self)
         self.stop_monitor_button = QPushButton("Stop Monitoring", self)
+        self.start_monitor_button.setIcon(self._std_icon("SP_MediaPlay"))
+        self.stop_monitor_button.setIcon(self._std_icon("SP_MediaStop"))
+        self.start_monitor_button.setStyleSheet("background: #2d8548;")
+        self.stop_monitor_button.setStyleSheet("background: #b22323;")
         actions.addWidget(self.start_monitor_button)
         actions.addWidget(self.stop_monitor_button)
         actions.addStretch(1)
         layout.addLayout(actions)
 
         motor_box = QGroupBox("Motor", self)
-        motor_layout = QGridLayout(motor_box)
+        motor_box.setMaximumWidth(620)
+        motor_layout = QVBoxLayout(motor_box)
 
         self.motor_position_label = QLabel("0", motor_box)
         self.motor_state_label = QLabel("Idle", motor_box)
         self.motor_state_label.setWordWrap(True)
+        self.motor_state_label.setStyleSheet(
+            "background: #eef6ff; border: 1px solid #c9ddf7; border-radius: 7px; "
+            "padding: 4px 8px; font-weight: 600; color: #244b7c;"
+        )
 
         self.jog_left_button = QPushButton("Hold Left", motor_box)
         self.jog_right_button = QPushButton("Hold Right", motor_box)
         self.set_zero_button = QPushButton("Set Zero", motor_box)
         self.emergency_stop_button = QPushButton("Emergency Stop", motor_box)
         self.emergency_stop_button.setStyleSheet("background: #b22323; color: white; font-weight: 600;")
+        self.jog_left_button.setIcon(self._std_icon("SP_ArrowLeft"))
+        self.jog_right_button.setIcon(self._std_icon("SP_ArrowRight"))
+        self.set_zero_button.setIcon(self._std_icon("SP_DialogResetButton"))
+        self.emergency_stop_button.setIcon(self._std_icon("SP_BrowserStop"))
 
         self.speed_spin = QSpinBox(motor_box)
         self.speed_spin.setRange(1, 5_000_000)
         self.speed_spin.setValue(self._controller.config.motor_speed)
+        self.speed_spin.setFixedWidth(180)
 
         self.accel_spin = QSpinBox(motor_box)
         self.accel_spin.setRange(1, 5_000_000)
         self.accel_spin.setValue(self._controller.config.motor_acceleration)
+        self.accel_spin.setFixedWidth(180)
 
         self.apply_motion_button = QPushButton("Apply Speed/Accel", motor_box)
         self.reload_motion_button = QPushButton("Read From Motor", motor_box)
+        self.apply_motion_button.setIcon(self._std_icon("SP_DialogApplyButton"))
+        self.reload_motion_button.setIcon(self._std_icon("SP_BrowserReload"))
+        self.apply_motion_button.setFixedWidth(170)
+        self.reload_motion_button.setFixedWidth(170)
 
         self.target_position_spin = QSpinBox(motor_box)
         self.target_position_spin.setRange(-2_000_000, 2_000_000)
+        self.target_position_spin.setFixedWidth(180)
         self.move_to_button = QPushButton("Move To", motor_box)
+        self.move_to_button.setIcon(self._std_icon("SP_ArrowRight"))
+        self.move_to_button.setFixedWidth(170)
+        self.jog_left_button.setFixedWidth(170)
+        self.jog_right_button.setFixedWidth(170)
+        self.set_zero_button.setFixedWidth(170)
+        self.emergency_stop_button.setFixedWidth(170)
 
-        motor_layout.addWidget(QLabel("Current position (steps)"), 0, 0)
-        motor_layout.addWidget(self.motor_position_label, 0, 1)
-        motor_layout.addWidget(QLabel("Motor state"), 1, 0)
-        motor_layout.addWidget(self.motor_state_label, 1, 1)
+        info_form = QFormLayout()
+        info_form.addRow("Current position (steps)", self.motor_position_label)
+        info_form.addRow("Motor state", self.motor_state_label)
+        info_form.addRow("Speed", self.speed_spin)
+        info_form.addRow("Acceleration", self.accel_spin)
+        info_form.addRow("Target position", self.target_position_spin)
+        motor_layout.addLayout(info_form)
 
-        motor_layout.addWidget(QLabel("Speed"), 2, 0)
-        motor_layout.addWidget(self.speed_spin, 2, 1)
-        motor_layout.addWidget(QLabel("Acceleration"), 3, 0)
-        motor_layout.addWidget(self.accel_spin, 3, 1)
-        motor_layout.addWidget(self.apply_motion_button, 4, 0)
-        motor_layout.addWidget(self.reload_motion_button, 4, 1)
+        motion_buttons = QHBoxLayout()
+        motion_buttons.addWidget(self.apply_motion_button)
+        motion_buttons.addWidget(self.reload_motion_button)
+        motion_buttons.addStretch(1)
+        motor_layout.addLayout(motion_buttons)
 
-        motor_layout.addWidget(self.jog_left_button, 5, 0)
-        motor_layout.addWidget(self.jog_right_button, 5, 1)
-        motor_layout.addWidget(self.set_zero_button, 6, 0)
-        motor_layout.addWidget(self.emergency_stop_button, 6, 1)
+        move_buttons = QHBoxLayout()
+        move_buttons.addWidget(self.move_to_button)
+        move_buttons.addStretch(1)
+        motor_layout.addLayout(move_buttons)
 
-        motor_layout.addWidget(QLabel("Target position"), 7, 0)
-        motor_layout.addWidget(self.target_position_spin, 7, 1)
-        motor_layout.addWidget(self.move_to_button, 8, 0, 1, 2)
+        jog_buttons = QHBoxLayout()
+        jog_buttons.addWidget(self.jog_left_button)
+        jog_buttons.addWidget(self.jog_right_button)
+        jog_buttons.addStretch(1)
+        motor_layout.addLayout(jog_buttons)
+
+        safety_buttons = QHBoxLayout()
+        safety_buttons.addWidget(self.set_zero_button)
+        safety_buttons.addWidget(self.emergency_stop_button)
+        safety_buttons.addStretch(1)
+        motor_layout.addLayout(safety_buttons)
+        motor_layout.addStretch(1)
 
         layout.addWidget(motor_box)
 
@@ -170,6 +208,7 @@ class MonitorTab(QWidget):
 
     def _on_motor_state(self, state: str) -> None:
         self.motor_state_label.setText(state)
+        self._set_state_chip_style(state)
 
     def _on_signal(self, value: float) -> None:
         self.current_signal_label.setText(f"{value:.6f}")
@@ -195,3 +234,22 @@ class MonitorTab(QWidget):
     def hideEvent(self, event) -> None:  # noqa: N802, ANN001
         self._emergency_stop()
         super().hideEvent(event)
+
+    def _std_icon(self, name: str) -> QIcon:
+        enum_item = getattr(QStyle.StandardPixmap, name, None)
+        if enum_item is None:
+            return QIcon()
+        return self.style().standardIcon(enum_item)
+
+    def _set_state_chip_style(self, state_text: str) -> None:
+        text = state_text.lower()
+        if "error" in text or "failed" in text:
+            bg, border, fg = "#ffe8e8", "#f2b2b2", "#8c1d1d"
+        elif "moving" in text or "jog" in text:
+            bg, border, fg = "#fff3df", "#f0cc8f", "#7a4a00"
+        else:
+            bg, border, fg = "#e8f7eb", "#b6e0bd", "#1e6a2f"
+        self.motor_state_label.setStyleSheet(
+            f"background: {bg}; border: 1px solid {border}; border-radius: 7px; "
+            f"padding: 4px 8px; font-weight: 600; color: {fg};"
+        )

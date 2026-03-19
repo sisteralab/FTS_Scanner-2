@@ -5,6 +5,7 @@ import datetime
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -95,6 +97,11 @@ class MeasureTab(QWidget):
         self.resume_button = QPushButton("Resume", actions_box)
         self.stop_button = QPushButton("Stop", actions_box)
         self.save_all_button = QPushButton("Save all", actions_box)
+        self.start_button.setIcon(self._std_icon("SP_MediaPlay"))
+        self.pause_button.setIcon(self._std_icon("SP_MediaPause"))
+        self.resume_button.setIcon(self._std_icon("SP_MediaSeekForward"))
+        self.stop_button.setIcon(self._std_icon("SP_MediaStop"))
+        self.save_all_button.setIcon(self._std_icon("SP_DialogSaveButton"))
 
         self.progress_bar = QProgressBar(actions_box)
         self.progress_bar.setRange(0, 1)
@@ -287,3 +294,9 @@ class MeasureTab(QWidget):
             "border-radius: 6px; padding: 4px 8px; "
             f"background: {bg}; color: {fg}; font-weight: 600;"
         )
+
+    def _std_icon(self, name: str) -> QIcon:
+        enum_item = getattr(QStyle.StandardPixmap, name, None)
+        if enum_item is None:
+            return QIcon()
+        return self.style().standardIcon(enum_item)
