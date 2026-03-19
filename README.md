@@ -40,7 +40,11 @@ build.bat
   - `Keysight VISA` (via `pyvisa`)
   - `Prologix Ethernet` (via `thzdaqapi`)
   - `Prologix USB` (via `thzdaqapi`)
-- `settings.ini` is saved automatically after initialize and loaded on startup.
+- Settings are stored in the native OS settings backend (`ASC / FTS Scanner`):
+  - Windows: Registry (`regedit`)
+  - macOS: user preferences (`plist`)
+  - Linux: user config store (Qt native settings backend)
+- Legacy `settings.ini` is migrated automatically on first start.
 - For Prologix mode install library:
   - `uv pip install -e ~/Labs/scripts/thzdaqapi`
 - For VISA mode install:

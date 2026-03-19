@@ -131,9 +131,9 @@ class MainController(QObject):
             self._config.ximc_root = Path(ximc_root.strip())
 
         try:
-            self._config.save_to_ini()
+            self._config.save()
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to persist settings.ini")
+            logger.exception("Failed to persist app settings")
 
         if use_simulation:
             self._motor = SimulatedMotorDevice()
@@ -155,6 +155,10 @@ class MainController(QObject):
 
         try:
             self._motor.initialize()
+            self._motor.set_motion_params(
+                int(self._config.motor_speed),
+                int(self._config.motor_acceleration),
+            )
             self._motor_ready = True
             pos = self._motor.get_position()
             self.motor_position_signal.emit(pos)
@@ -302,6 +306,17 @@ class MainController(QObject):
 
         if self.is_monitoring():
             self.stop_monitoring()
+
+        try:
+            self._motor.set_motion_params(
+                int(self._config.motor_speed),
+                int(self._config.motor_acceleration),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            logger.exception("Failed to apply saved motor params before measurement")
+            self.status_changed.emit(f"Failed to apply saved motor params: {exc}")
+            return
 
         logger.info("Starting measurement with settings: %s", settings)
 
@@ -545,7 +560,7 @@ class MainController(QObject):
         self._config.motor_speed = int(speed)
         self._config.motor_acceleration = int(acceleration)
         try:
-            self._config.save_to_ini()
+            self._config.save()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to persist motor motion params")
         self.motor_motion_params_signal.emit(int(speed), int(acceleration))

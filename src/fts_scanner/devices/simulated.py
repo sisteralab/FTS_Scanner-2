@@ -12,7 +12,7 @@ class SimulatedMotorDevice:
 
     position_steps: int = 0
     motion_speed: int = 1000
-    motion_acceleration: int = 1000
+    motion_acceleration: int = 500
     _jog_direction: int = 0
     _last_update_ts: float = field(default_factory=time.monotonic)
 
