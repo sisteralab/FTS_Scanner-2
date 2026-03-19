@@ -30,6 +30,7 @@ class MainController(QObject):
     monitoring_signal = Signal(float)
     motor_position_signal = Signal(int)
     motor_motion_params_signal = Signal(int, int)
+    motor_state_signal = Signal(str)
     measurement_point = Signal(dict)
     measurement_started = Signal()
     measurement_finished = Signal()
@@ -164,6 +165,7 @@ class MainController(QObject):
             self.motor_position_signal.emit(pos)
             self._start_motor_worker(self._motor)
             self.read_motor_motion_params()
+            self._motor_timer.start()
             motor_message = f"Motor connected at position {pos} steps"
         except Exception as exc:  # noqa: BLE001
             self._motor_ready = False
@@ -210,8 +212,6 @@ class MainController(QObject):
 
         if self._lock_in_ready and self._lockin_worker is not None:
             self._monitor_timer.start()
-        if self._motor_ready and self._motor_worker is not None:
-            self._motor_timer.start()
 
         logger.info("Monitoring started")
         self.status_changed.emit("Monitoring started")
@@ -219,9 +219,8 @@ class MainController(QObject):
 
     def stop_monitoring(self) -> None:
         """Disable periodic lock-in and motor polling."""
-        was_running = self.is_monitoring()
+        was_running = self._monitor_timer.isActive()
         self._monitor_timer.stop()
-        self._motor_timer.stop()
         if was_running:
             logger.info("Monitoring stopped")
             self.status_changed.emit("Monitoring stopped")
@@ -229,7 +228,7 @@ class MainController(QObject):
 
     def is_monitoring(self) -> bool:
         """Return True if monitor timers are active."""
-        return self._monitor_timer.isActive() or self._motor_timer.isActive()
+        return self._monitor_timer.isActive()
 
     def move_motor_by(self, delta_steps: int, wait_ms: int = 20) -> None:
         """Queue relative motor move in worker thread."""
@@ -306,6 +305,7 @@ class MainController(QObject):
 
         if self.is_monitoring():
             self.stop_monitoring()
+        self._motor_timer.stop()
 
         try:
             self._motor.set_motion_params(
@@ -459,10 +459,12 @@ class MainController(QObject):
         self._motor_worker.command_error.connect(self._on_motor_worker_error)
         self._motor_worker.motion_params_ready.connect(self._on_motor_motion_params_ready)
         self._motor_worker.motion_params_applied.connect(self._on_motor_motion_params_applied)
+        self._motor_worker.motion_state_ready.connect(self.motor_state_signal.emit)
 
         self._motor_thread.start()
 
     def _stop_motor_worker(self) -> None:
+        self._motor_timer.stop()
         if self._motor_worker is not None:
             for signal, slot in (
                 (self.motor_poll_requested, self._motor_worker.poll_position),
@@ -494,6 +496,10 @@ class MainController(QObject):
                 self._motor_worker.motion_params_applied.disconnect(
                     self._on_motor_motion_params_applied
                 )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._motor_worker.motion_state_ready.disconnect(self.motor_state_signal.emit)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -587,6 +593,8 @@ class MainController(QObject):
         if self._current_measure is not None:
             self._current_measure.data.setdefault("meta", {})["status"] = "completed"
             self._current_measure.save(finish=True)
+        if self._motor_ready and self._motor_worker is not None and not self._motor_timer.isActive():
+            self._motor_timer.start()
         logger.info("Measurement completed")
         self.status_changed.emit("Measurement completed")
         self.measurement_finished.emit()
@@ -596,6 +604,8 @@ class MainController(QObject):
             self._current_measure.data.setdefault("meta", {})["status"] = "failed"
             self._current_measure.data.setdefault("meta", {})["error"] = error
             self._current_measure.save(finish=True)
+        if self._motor_ready and self._motor_worker is not None and not self._motor_timer.isActive():
+            self._motor_timer.start()
         self._last_error = error
         logger.error("Measurement failed: %s", error)
         self.status_changed.emit(f"Measurement failed: {error}")

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fts_scanner.devices.interfaces import MotorMotionStatus
+
 logger = logging.getLogger(__name__)
 
 
@@ -106,6 +108,26 @@ class XimcMotorDevice:
         write_result = self._lib.set_move_settings(self._device_id, self._pyximc.byref(move_settings))
         self._expect_ok(write_result, "set_move_settings")
 
+    def get_motion_status(self) -> MotorMotionStatus:
+        """Read active move command status from controller."""
+        self._ensure_open()
+        status = self._pyximc.status_t()
+        result = self._lib.get_status(self._device_id, self._pyximc.byref(status))
+        self._expect_ok(result, "get_status")
+
+        mv_cmd_sts = int(status.MvCmdSts)
+        running_flag = int(getattr(self._pyximc.MvcmdStatus, "MVCMD_RUNNING", 0x80))
+        error_flag = int(getattr(self._pyximc.MvcmdStatus, "MVCMD_ERROR", 0x40))
+        name_mask = int(getattr(self._pyximc.MvcmdStatus, "MVCMD_NAME_BITS", 0x3F))
+        command_code = mv_cmd_sts & name_mask
+        command = self._command_name(command_code)
+        return MotorMotionStatus(
+            is_moving=bool(mv_cmd_sts & running_flag),
+            has_error=bool(mv_cmd_sts & error_flag),
+            command=command,
+            command_code=command_code,
+        )
+
     def shutdown(self) -> None:
         """Close device and clear loaded handles."""
         if self._device_id is None or self._pyximc is None:
@@ -139,6 +161,21 @@ class XimcMotorDevice:
             message = f"XIMC {operation} failed with code={result}"
             logger.error(message)
             raise RuntimeError(message)
+
+    def _command_name(self, command_code: int) -> str:
+        mv = self._pyximc.MvcmdStatus
+        mapping = {
+            int(getattr(mv, "MVCMD_MOVE", 0x01)): "move_to",
+            int(getattr(mv, "MVCMD_MOVR", 0x02)): "move_by",
+            int(getattr(mv, "MVCMD_LEFT", 0x03)): "left",
+            int(getattr(mv, "MVCMD_RIGHT", 0x04)): "right",
+            int(getattr(mv, "MVCMD_STOP", 0x05)): "stop",
+            int(getattr(mv, "MVCMD_HOME", 0x06)): "home",
+            int(getattr(mv, "MVCMD_LOFT", 0x07)): "loft",
+            int(getattr(mv, "MVCMD_SSTP", 0x08)): "soft_stop",
+            int(getattr(mv, "MVCMD_UKNWN", 0x00)): "idle",
+        }
+        return mapping.get(int(command_code), f"cmd_{int(command_code)}")
 
     @staticmethod
     def _import_pyximc(ximc_root: Path) -> tuple[Any, Any]:

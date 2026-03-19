@@ -4,6 +4,7 @@ import datetime
 
 import numpy as np
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -98,13 +99,21 @@ class MeasureTab(QWidget):
         self.progress_bar = QProgressBar(actions_box)
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
+        self.motor_state_badge = QLabel("Motor: idle", actions_box)
+        self.motor_state_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.motor_state_badge.setMinimumHeight(30)
+        self.motor_state_badge.setStyleSheet(
+            "border-radius: 6px; padding: 4px 8px; "
+            "background: #2d8548; color: #ffffff; font-weight: 600;"
+        )
 
         actions_layout.addWidget(self.start_button, 0, 0)
         actions_layout.addWidget(self.pause_button, 0, 1)
         actions_layout.addWidget(self.resume_button, 1, 0)
         actions_layout.addWidget(self.stop_button, 1, 1)
         actions_layout.addWidget(self.progress_bar, 2, 0, 1, 2)
-        actions_layout.addWidget(self.save_all_button, 3, 0, 1, 2)
+        actions_layout.addWidget(self.motor_state_badge, 3, 0, 1, 2)
+        actions_layout.addWidget(self.save_all_button, 4, 0, 1, 2)
 
         left_panel.addWidget(actions_box)
         left_panel.addStretch(1)
@@ -157,6 +166,7 @@ class MeasureTab(QWidget):
         self._controller.measurement_point.connect(self._on_measurement_point)
         self._controller.measurement_finished.connect(self._on_measurement_finished)
         self._controller.measurement_failed.connect(self._on_measurement_failed)
+        self._controller.motor_state_signal.connect(self._on_motor_state)
 
         self._update_summary_labels()
         self._set_measure_buttons(running=False)
@@ -194,6 +204,7 @@ class MeasureTab(QWidget):
 
     def _on_measurement_started(self) -> None:
         self._set_measure_buttons(running=True)
+        self._set_motor_state_badge("Measurement: starting motor scan", "moving")
 
     def _on_measurement_point(self, point: dict) -> None:
         repeat = int(point.get("repeat", 0))
@@ -208,6 +219,10 @@ class MeasureTab(QWidget):
         self._measurement_y.append(float(point["signal"]))
         self._interferogram_curve.setData(self._measurement_x, self._measurement_y)
         self._update_spectrum()
+        self._set_motor_state_badge(
+            f"Measurement: repeat {repeat + 1}, point {index + 1}, pos {int(point['position_steps'])}",
+            "moving",
+        )
 
         if self._active_settings is not None:
             done = repeat * self._active_settings.point_count + index + 1
@@ -216,9 +231,11 @@ class MeasureTab(QWidget):
     def _on_measurement_finished(self) -> None:
         self._set_measure_buttons(running=False)
         self.progress_bar.setValue(self.progress_bar.maximum())
+        self._set_motor_state_badge("Measurement completed, motor returned to 0", "idle")
 
     def _on_measurement_failed(self, error: str) -> None:
         self._set_measure_buttons(running=False)
+        self._set_motor_state_badge(f"Measurement failed: {error}", "error")
         QMessageBox.critical(self, "Measurement failed", error)
 
     def _set_measure_buttons(self, running: bool) -> None:
@@ -245,3 +262,28 @@ class MeasureTab(QWidget):
 
     def _on_save_all(self) -> None:
         MeasureManager.save_all()
+
+    def _on_motor_state(self, state: str) -> None:
+        lower = state.lower()
+        if "error" in lower or "failed" in lower:
+            category = "error"
+        elif "moving" in lower or "jog" in lower:
+            category = "moving"
+        else:
+            category = "idle"
+        self._set_motor_state_badge(state, category)
+
+    def _set_motor_state_badge(self, text: str, category: str) -> None:
+        palette = {
+            "idle": ("#2d8548", "#ffffff"),
+            "moving": ("#d17a00", "#ffffff"),
+            "error": ("#b22323", "#ffffff"),
+        }
+        bg, fg = palette.get(category, ("#3a6ea5", "#ffffff"))
+        rendered = text if len(text) <= 70 else f"{text[:67]}..."
+        self.motor_state_badge.setText(rendered)
+        self.motor_state_badge.setToolTip(text)
+        self.motor_state_badge.setStyleSheet(
+            "border-radius: 6px; padding: 4px 8px; "
+            f"background: {bg}; color: {fg}; font-weight: 600;"
+        )

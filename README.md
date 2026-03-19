@@ -52,6 +52,7 @@ build.bat
 - Disable simulation for real hardware.
 - `Monitor` tab provides:
   - motor position, set-zero, target move
+  - continuous motor state tracking (idle/moving/error + target)
   - press-and-hold jog buttons for relative motion
   - real-time lock-in stream with adjustable visible time window
 - `Measure` tab provides scan setup, progress bar, interferogram and FFT spectrum plots.

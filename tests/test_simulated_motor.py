@@ -29,6 +29,21 @@ class TestSimulatedMotor(unittest.TestCase):
         time.sleep(0.03)
         self.assertEqual(motor.get_position(), stopped)
 
+    def test_motion_status_reflects_jog_direction(self) -> None:
+        motor = SimulatedMotorDevice()
+        idle = motor.get_motion_status()
+        self.assertFalse(idle.is_moving)
+        self.assertEqual(idle.command, "idle")
+
+        motor.start_jog(1)
+        moving = motor.get_motion_status()
+        self.assertTrue(moving.is_moving)
+        self.assertEqual(moving.command, "jog_right")
+
+        motor.stop()
+        stopped = motor.get_motion_status()
+        self.assertFalse(stopped.is_moving)
+
 
 if __name__ == "__main__":
     unittest.main()

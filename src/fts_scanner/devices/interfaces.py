@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
+
+
+@dataclass(slots=True)
+class MotorMotionStatus:
+    """Current motor motion state snapshot."""
+
+    is_moving: bool
+    has_error: bool
+    command: str
+    command_code: int = 0
 
 
 class MotorDevice(Protocol):
@@ -35,6 +46,9 @@ class MotorDevice(Protocol):
 
     def set_motion_params(self, speed: int, acceleration: int) -> None:
         """Apply (speed, acceleration) settings."""
+
+    def get_motion_status(self) -> MotorMotionStatus:
+        """Return current movement status and active command."""
 
     def shutdown(self) -> None:
         """Release all resources."""

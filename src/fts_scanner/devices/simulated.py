@@ -5,6 +5,8 @@ import random
 from dataclasses import dataclass, field
 import time
 
+from fts_scanner.devices.interfaces import MotorMotionStatus
+
 
 @dataclass(slots=True)
 class SimulatedMotorDevice:
@@ -60,6 +62,29 @@ class SimulatedMotorDevice:
         """Apply simulated speed and acceleration."""
         self.motion_speed = max(1, int(speed))
         self.motion_acceleration = max(1, int(acceleration))
+
+    def get_motion_status(self) -> MotorMotionStatus:
+        """Return synthetic command status for UI monitoring."""
+        if self._jog_direction > 0:
+            return MotorMotionStatus(
+                is_moving=True,
+                has_error=False,
+                command="jog_right",
+                command_code=4,
+            )
+        if self._jog_direction < 0:
+            return MotorMotionStatus(
+                is_moving=True,
+                has_error=False,
+                command="jog_left",
+                command_code=3,
+            )
+        return MotorMotionStatus(
+            is_moving=False,
+            has_error=False,
+            command="idle",
+            command_code=0,
+        )
 
     def shutdown(self) -> None:
         """No-op for simulator."""
