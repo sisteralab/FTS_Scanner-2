@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import count
 from threading import Event, Lock
+import time
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, Signal, Slot
@@ -80,8 +81,13 @@ class MotorCommandClient(QObject):
         self._dispatch_no_result(self.request_move_by, int(delta_steps), timeout_s=30.0)
 
     def wait_for_stop(self, timeout_ms: int) -> None:
-        timeout_s = max(5.0, float(timeout_ms) / 1000.0 + 5.0)
-        self._dispatch_no_result(self.request_wait_for_stop, int(timeout_ms), timeout_s=timeout_s)
+        poll_interval_s = max(0.01, min(float(timeout_ms) / 1000.0, 0.2))
+        while True:
+            status = self.get_motion_status()
+            position = self.get_position()
+            if not bool(status.is_moving):
+                return
+            time.sleep(poll_interval_s)
 
     def get_position(self) -> int:
         result = self._dispatch_with_result(self.request_get_position, timeout_s=5.0)
