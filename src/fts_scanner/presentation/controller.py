@@ -43,14 +43,6 @@ class MainController(QObject):
     initialized = Signal(bool)
 
     motor_poll_requested = Signal()
-    motor_move_by_requested = Signal(int, int)
-    motor_move_to_requested = Signal(int, int)
-    motor_set_zero_requested = Signal()
-    motor_stop_requested = Signal()
-    motor_start_jog_requested = Signal(int)
-    motor_read_motion_requested = Signal()
-    motor_write_motion_requested = Signal(int, int)
-
     lockin_poll_requested = Signal()
 
     def __init__(self, config: AppConfig, project_root: Path) -> None:
@@ -244,64 +236,93 @@ class MainController(QObject):
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
             return
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        self.motor_move_by_requested.emit(int(delta_steps), int(wait_ms))
+        try:
+            self._motor_command_client.move_by(int(delta_steps))
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Motor move failed: {exc}")
 
     def move_motor_to(self, target_steps: int, wait_ms: int = 100) -> None:
         """Queue absolute motor move in worker thread."""
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
             return
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        self.motor_move_to_requested.emit(int(target_steps), int(wait_ms))
+        try:
+            self._motor_command_client.move_to(int(target_steps))
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Motor move failed: {exc}")
 
     def set_motor_zero(self) -> None:
         """Queue set-zero motor command."""
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
             return
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        self.motor_set_zero_requested.emit()
+        try:
+            self._motor_command_client.set_zero()
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Set zero failed: {exc}")
 
     def stop_motor_motion(self) -> None:
         """Stop motor immediately."""
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             return
-        self.motor_stop_requested.emit()
+        try:
+            self._motor_command_client.stop()
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Stop motor failed: {exc}")
 
     def start_motor_jog(self, direction: int) -> None:
         """Start continuous motor jog while control is held."""
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
             return
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             self.status_changed.emit("Motor is not initialized")
             return
         if direction == 0:
             return
-        self.motor_start_jog_requested.emit(1 if direction > 0 else -1)
+        try:
+            self._motor_command_client.start_jog(1 if direction > 0 else -1)
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Start jog failed: {exc}")
 
     def read_motor_motion_params(self) -> None:
         """Request current speed/acceleration from motor."""
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             return
-        self.motor_read_motion_requested.emit()
+        try:
+            speed, acceleration = self._motor_command_client.get_motion_params()
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Read motion params failed: {exc}")
+            return
+        self._on_motor_motion_params_ready(int(speed), int(acceleration))
 
     def set_motor_motion_params(self, speed: int, acceleration: int) -> None:
         """Apply motor speed/acceleration in worker thread."""
         if self.is_measurement_running:
             self.status_changed.emit("Motor control is disabled while measurement is running")
             return
-        if not self._motor_ready or self._motor_worker is None:
+        if not self._motor_ready or self._motor_command_client is None:
             self.status_changed.emit("Motor is not initialized")
             return
-        self.motor_write_motion_requested.emit(int(speed), int(acceleration))
+        try:
+            applied_speed, applied_accel = self._motor_command_client.set_motion_params(
+                int(speed),
+                int(acceleration),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._report_motor_command_error(f"Set motion params failed: {exc}")
+            return
+        self._on_motor_motion_params_ready(int(applied_speed), int(applied_accel))
+        self._on_motor_motion_params_applied(int(applied_speed), int(applied_accel))
 
     def start_measurement(self, settings: ScanSettings) -> None:
         """Start spectrogram measurement in background thread."""
@@ -314,7 +335,6 @@ class MainController(QObject):
 
         if self.is_monitoring():
             self.stop_monitoring()
-        self._motor_timer.stop()
 
         try:
             self._measurement_motor.set_motion_params(
@@ -458,13 +478,6 @@ class MainController(QObject):
         self._motor_thread.finished.connect(self._motor_worker.deleteLater)
 
         self.motor_poll_requested.connect(self._motor_worker.poll_position)
-        self.motor_move_by_requested.connect(self._motor_worker.move_by)
-        self.motor_move_to_requested.connect(self._motor_worker.move_to)
-        self.motor_set_zero_requested.connect(self._motor_worker.set_zero)
-        self.motor_stop_requested.connect(self._motor_worker.stop_motion)
-        self.motor_start_jog_requested.connect(self._motor_worker.start_jog)
-        self.motor_read_motion_requested.connect(self._motor_worker.read_motion_params)
-        self.motor_write_motion_requested.connect(self._motor_worker.set_motion_params)
 
         self._motor_worker.position_ready.connect(self.motor_position_signal.emit)
         self._motor_worker.command_error.connect(self._on_motor_worker_error)
@@ -477,20 +490,10 @@ class MainController(QObject):
     def _stop_motor_worker(self) -> None:
         self._motor_timer.stop()
         if self._motor_worker is not None:
-            for signal, slot in (
-                (self.motor_poll_requested, self._motor_worker.poll_position),
-                (self.motor_move_by_requested, self._motor_worker.move_by),
-                (self.motor_move_to_requested, self._motor_worker.move_to),
-                (self.motor_set_zero_requested, self._motor_worker.set_zero),
-                (self.motor_stop_requested, self._motor_worker.stop_motion),
-                (self.motor_start_jog_requested, self._motor_worker.start_jog),
-                (self.motor_read_motion_requested, self._motor_worker.read_motion_params),
-                (self.motor_write_motion_requested, self._motor_worker.set_motion_params),
-            ):
-                try:
-                    signal.disconnect(slot)
-                except Exception:  # noqa: BLE001
-                    pass
+            try:
+                self.motor_poll_requested.disconnect(self._motor_worker.poll_position)
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 self._motor_worker.position_ready.disconnect(self.motor_position_signal.emit)
             except Exception:  # noqa: BLE001
@@ -566,6 +569,11 @@ class MainController(QObject):
         self._motor_timer.stop()
         if not self._monitor_timer.isActive():
             self.monitoring_state_changed.emit(False)
+
+    def _report_motor_command_error(self, error: str) -> None:
+        self._last_error = error
+        logger.error(error)
+        self.status_changed.emit(error)
 
     def _on_lockin_worker_error(self, error: str) -> None:
         self._last_error = error

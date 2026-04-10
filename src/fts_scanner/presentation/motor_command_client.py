@@ -23,7 +23,6 @@ class MotorCommandClient(QObject):
 
     request_move_to = Signal(int, int)
     request_move_by = Signal(int, int)
-    request_wait_for_stop = Signal(int, int)
     request_get_position = Signal(int)
     request_set_zero = Signal(int)
     request_stop = Signal(int)
@@ -41,10 +40,6 @@ class MotorCommandClient(QObject):
 
         self.request_move_to.connect(worker.sync_move_to, Qt.ConnectionType.QueuedConnection)
         self.request_move_by.connect(worker.sync_move_by, Qt.ConnectionType.QueuedConnection)
-        self.request_wait_for_stop.connect(
-            worker.sync_wait_for_stop,
-            Qt.ConnectionType.QueuedConnection,
-        )
         self.request_get_position.connect(
             worker.sync_get_position,
             Qt.ConnectionType.QueuedConnection,
@@ -67,11 +62,11 @@ class MotorCommandClient(QObject):
 
         worker.sync_command_completed.connect(
             self._on_command_completed,
-            Qt.ConnectionType.QueuedConnection,
+            Qt.ConnectionType.DirectConnection,
         )
         worker.sync_command_failed.connect(
             self._on_command_failed,
-            Qt.ConnectionType.QueuedConnection,
+            Qt.ConnectionType.DirectConnection,
         )
 
     def move_to(self, steps: int) -> None:
@@ -107,13 +102,15 @@ class MotorCommandClient(QObject):
         speed, acceleration = result
         return int(speed), int(acceleration)
 
-    def set_motion_params(self, speed: int, acceleration: int) -> None:
-        self._dispatch_no_result(
+    def set_motion_params(self, speed: int, acceleration: int) -> tuple[int, int]:
+        result = self._dispatch_with_result(
             self.request_set_motion_params,
             int(speed),
             int(acceleration),
             timeout_s=5.0,
         )
+        applied_speed, applied_acceleration = result
+        return int(applied_speed), int(applied_acceleration)
 
     def get_motion_status(self) -> MotorMotionStatus:
         result = self._dispatch_with_result(self.request_get_motion_status, timeout_s=5.0)

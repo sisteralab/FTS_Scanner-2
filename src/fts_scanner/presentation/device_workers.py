@@ -217,16 +217,6 @@ class MotorIoWorker(QObject):
         except Exception as exc:  # noqa: BLE001
             self.sync_command_failed.emit(int(request_id), str(exc))
 
-    @Slot(int, int)
-    def sync_wait_for_stop(self, request_id: int, wait_ms: int) -> None:
-        try:
-            self._motor.wait_for_stop(int(wait_ms))
-            self._read_position_and_state()
-            self.sync_command_completed.emit(int(request_id), None)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Wait for stop failed")
-            self.sync_command_failed.emit(int(request_id), f"Motor wait failed: {exc}")
-
     @Slot(int)
     def sync_get_position(self, request_id: int) -> None:
         try:
@@ -267,7 +257,6 @@ class MotorIoWorker(QObject):
     def sync_get_motion_params(self, request_id: int) -> None:
         try:
             speed, acceleration = self._get_motion_params_impl()
-            self.motion_params_ready.emit(int(speed), int(acceleration))
             self.sync_command_completed.emit(
                 int(request_id),
                 (int(speed), int(acceleration)),
@@ -286,9 +275,10 @@ class MotorIoWorker(QObject):
                 int(speed),
                 int(acceleration),
             )
-            self.motion_params_applied.emit(int(applied_speed), int(applied_accel))
-            self.motion_params_ready.emit(int(applied_speed), int(applied_accel))
-            self.sync_command_completed.emit(int(request_id), None)
+            self.sync_command_completed.emit(
+                int(request_id),
+                (int(applied_speed), int(applied_accel)),
+            )
         except Exception as exc:  # noqa: BLE001
             self.sync_command_failed.emit(int(request_id), str(exc))
 
