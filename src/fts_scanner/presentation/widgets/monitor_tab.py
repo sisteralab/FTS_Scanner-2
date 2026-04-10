@@ -28,6 +28,9 @@ class MonitorTab(QWidget):
 
         self._signal_samples: list[tuple[float, float]] = []
         self._jog_direction = 0
+        self._motor_ready = False
+        self._lockin_ready = False
+        self._measurement_running = False
 
         layout = QVBoxLayout(self)
 
@@ -168,7 +171,12 @@ class MonitorTab(QWidget):
         self._controller.motor_motion_params_signal.connect(self._on_motion_params)
         self._controller.motor_state_signal.connect(self._on_motor_state)
         self._controller.monitoring_state_changed.connect(self._set_monitor_buttons_state)
+        self._controller.setup_status.connect(self._on_setup_status)
+        self._controller.measurement_started.connect(self._on_measurement_started)
+        self._controller.measurement_finished.connect(self._on_measurement_finished)
+        self._controller.measurement_failed.connect(self._on_measurement_failed)
         self._set_monitor_buttons_state(False)
+        self._refresh_motor_controls()
 
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
@@ -228,8 +236,43 @@ class MonitorTab(QWidget):
         self._stream_curve.setData(x, y)
 
     def _set_monitor_buttons_state(self, is_running: bool) -> None:
-        self.start_monitor_button.setEnabled(not is_running)
+        monitoring_available = self._motor_ready or self._lockin_ready
+        self.start_monitor_button.setEnabled(monitoring_available and not is_running)
         self.stop_monitor_button.setEnabled(is_running)
+
+    def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, _message: str) -> None:
+        self._motor_ready = bool(motor_ok)
+        self._lockin_ready = bool(lockin_ok)
+        self._refresh_motor_controls()
+        self._set_monitor_buttons_state(False)
+
+    def _on_measurement_started(self) -> None:
+        self._measurement_running = True
+        self._refresh_motor_controls()
+
+    def _on_measurement_finished(self) -> None:
+        self._measurement_running = False
+        self._refresh_motor_controls()
+
+    def _on_measurement_failed(self, _error: str) -> None:
+        self._measurement_running = False
+        self._refresh_motor_controls()
+
+    def _refresh_motor_controls(self) -> None:
+        manual_control_enabled = self._motor_ready and not self._measurement_running
+        for widget in (
+            self.jog_left_button,
+            self.jog_right_button,
+            self.set_zero_button,
+            self.speed_spin,
+            self.accel_spin,
+            self.apply_motion_button,
+            self.reload_motion_button,
+            self.target_position_spin,
+            self.move_to_button,
+        ):
+            widget.setEnabled(manual_control_enabled)
+        self.emergency_stop_button.setEnabled(self._motor_ready)
 
     def hideEvent(self, event) -> None:  # noqa: N802, ANN001
         # Tab switching should not cancel normal moves or measurement motion.

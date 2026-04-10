@@ -107,6 +107,9 @@ class SetupTab(QWidget):
         self.lockin_adapter_combo.currentIndexChanged.connect(self._update_adapter_fields)
         self.simulation_checkbox.toggled.connect(self._update_adapter_fields)
         self._controller.setup_status.connect(self._on_setup_status)
+        self._controller.measurement_started.connect(self._on_measurement_started)
+        self._controller.measurement_finished.connect(self._on_measurement_finished)
+        self._controller.measurement_failed.connect(self._on_measurement_failed)
 
         self._update_adapter_fields()
         self._set_status_chip(self.motor_status_label, False)
@@ -153,6 +156,32 @@ class SetupTab(QWidget):
         self._set_status_chip(self.motor_status_label, motor_ok)
         self._set_status_chip(self.lockin_status_label, lockin_ok)
         self.summary_label.setText(message)
+
+    def _on_measurement_started(self) -> None:
+        self._set_connection_controls_enabled(False)
+        self.summary_label.setText("Measurement is running. Reinitialization is locked.")
+
+    def _on_measurement_finished(self) -> None:
+        self._set_connection_controls_enabled(True)
+
+    def _on_measurement_failed(self, _error: str) -> None:
+        self._set_connection_controls_enabled(True)
+
+    def _set_connection_controls_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.simulation_checkbox,
+            self.lockin_adapter_combo,
+            self.lockin_host_edit,
+            self.lockin_port_spin,
+            self.lockin_usb_port_edit,
+            self.lockin_gpib_spin,
+            self.lockin_visa_resource_edit,
+            self.lockin_visa_library_edit,
+            self.motor_name_edit,
+            self.ximc_path_edit,
+            self.init_button,
+        ):
+            widget.setEnabled(enabled)
 
     def _set_status_chip(self, label: QLabel, ok: bool) -> None:
         if ok:

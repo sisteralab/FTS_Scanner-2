@@ -40,6 +40,8 @@ class MeasureTab(QWidget):
         self._current_repeat = 0
         self._active_settings: ScanSettings | None = None
         self._total_points = 0
+        self._devices_ready = False
+        self._measurement_running = False
 
         root = QHBoxLayout(self)
 
@@ -113,6 +115,9 @@ class MeasureTab(QWidget):
             "border-radius: 6px; padding: 4px 8px; "
             "background: #2d8548; color: #ffffff; font-weight: 600;"
         )
+        self.motor_detail_label = QLabel("Motor state: not initialized", actions_box)
+        self.motor_detail_label.setWordWrap(True)
+        self.motor_detail_label.setStyleSheet("color: #42536b; padding: 2px 4px;")
 
         actions_layout.addWidget(self.start_button, 0, 0)
         actions_layout.addWidget(self.pause_button, 0, 1)
@@ -120,7 +125,8 @@ class MeasureTab(QWidget):
         actions_layout.addWidget(self.stop_button, 1, 1)
         actions_layout.addWidget(self.progress_bar, 2, 0, 1, 2)
         actions_layout.addWidget(self.motor_state_badge, 3, 0, 1, 2)
-        actions_layout.addWidget(self.save_all_button, 4, 0, 1, 2)
+        actions_layout.addWidget(self.motor_detail_label, 4, 0, 1, 2)
+        actions_layout.addWidget(self.save_all_button, 5, 0, 1, 2)
 
         left_panel.addWidget(actions_box)
         left_panel.addStretch(1)
@@ -174,6 +180,7 @@ class MeasureTab(QWidget):
         self._controller.measurement_finished.connect(self._on_measurement_finished)
         self._controller.measurement_failed.connect(self._on_measurement_failed)
         self._controller.motor_state_signal.connect(self._on_motor_state)
+        self._controller.setup_status.connect(self._on_setup_status)
 
         self._update_summary_labels()
         self._set_measure_buttons(running=False)
@@ -210,6 +217,7 @@ class MeasureTab(QWidget):
         self._controller.start_measurement(self._active_settings)
 
     def _on_measurement_started(self) -> None:
+        self._measurement_running = True
         self._set_measure_buttons(running=True)
         self._set_motor_state_badge("Measurement: starting motor scan", "moving")
 
@@ -236,20 +244,27 @@ class MeasureTab(QWidget):
             self.progress_bar.setValue(min(done, self.progress_bar.maximum()))
 
     def _on_measurement_finished(self) -> None:
+        self._measurement_running = False
         self._set_measure_buttons(running=False)
         self.progress_bar.setValue(self.progress_bar.maximum())
         self._set_motor_state_badge("Measurement completed, motor returned to 0", "idle")
 
     def _on_measurement_failed(self, error: str) -> None:
+        self._measurement_running = False
         self._set_measure_buttons(running=False)
         self._set_motor_state_badge(f"Measurement failed: {error}", "error")
         QMessageBox.critical(self, "Measurement failed", error)
 
     def _set_measure_buttons(self, running: bool) -> None:
-        self.start_button.setEnabled(not running)
+        self.start_button.setEnabled(self._devices_ready and not running)
         self.pause_button.setEnabled(running)
-        self.resume_button.setEnabled(running)
+        self.resume_button.setEnabled(False)
         self.stop_button.setEnabled(running)
+        self.wait_spin.setEnabled(not running)
+        self.pos_spin.setEnabled(not running)
+        self.neg_spin.setEnabled(not running)
+        self.step_spin.setEnabled(not running)
+        self.repeat_spin.setEnabled(not running)
 
     def _update_spectrum(self) -> None:
         if len(self._measurement_y) < 8 or self._active_settings is None:
@@ -271,6 +286,7 @@ class MeasureTab(QWidget):
         MeasureManager.save_all()
 
     def _on_motor_state(self, state: str) -> None:
+        self.motor_detail_label.setText(f"Motor state: {state}")
         lower = state.lower()
         if "error" in lower or "failed" in lower:
             category = "error"
@@ -278,7 +294,14 @@ class MeasureTab(QWidget):
             category = "moving"
         else:
             category = "idle"
-        self._set_motor_state_badge(state, category)
+        if not self._measurement_running:
+            self._set_motor_state_badge(state, category)
+
+    def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, _message: str) -> None:
+        self._devices_ready = bool(motor_ok and lockin_ok)
+        self._set_measure_buttons(running=self._measurement_running)
+        if not self._devices_ready and not self._measurement_running:
+            self._set_motor_state_badge("Measurement unavailable: initialize motor and lock-in", "error")
 
     def _set_motor_state_badge(self, text: str, category: str) -> None:
         palette = {

@@ -21,6 +21,10 @@ class FakeController(QObject):
     motor_motion_params_signal = Signal(int, int)
     motor_state_signal = Signal(str)
     monitoring_state_changed = Signal(bool)
+    setup_status = Signal(bool, bool, str)
+    measurement_started = Signal()
+    measurement_finished = Signal()
+    measurement_failed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -69,6 +73,21 @@ class TestMonitorTab(unittest.TestCase):
         tab.hideEvent(QHideEvent())
 
         self.assertEqual(controller.stop_calls, 1)
+
+    def test_manual_motor_controls_disable_during_measurement(self) -> None:
+        controller = FakeController()
+        tab = MonitorTab(controller)
+
+        controller.setup_status.emit(True, True, "ok")
+        self.assertTrue(tab.move_to_button.isEnabled())
+        self.assertTrue(tab.jog_left_button.isEnabled())
+        self.assertTrue(tab.emergency_stop_button.isEnabled())
+
+        controller.measurement_started.emit()
+
+        self.assertFalse(tab.move_to_button.isEnabled())
+        self.assertFalse(tab.jog_left_button.isEnabled())
+        self.assertTrue(tab.emergency_stop_button.isEnabled())
 
 
 if __name__ == "__main__":
