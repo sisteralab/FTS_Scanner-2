@@ -19,6 +19,9 @@ class TrackingMotor(SimulatedMotorDevice):
         super().move_to(steps)
         self.move_to_timestamps.append(time.monotonic())
 
+    def move_by(self, delta_steps: int) -> None:
+        super().move_by(delta_steps)
+
 
 class TrackingLockIn(SimulatedLockInDevice):
     def __init__(self) -> None:
@@ -105,7 +108,31 @@ class TestUseCases(unittest.TestCase):
         self.assertGreaterEqual(len(lock_in.read_timestamps), 1)
         first_move_ts = motor.move_to_timestamps[0]
         first_read_ts = lock_in.read_timestamps[0]
-        self.assertGreaterEqual(first_read_ts - first_move_ts, 0.03)
+        self.assertGreaterEqual(first_read_ts - first_move_ts, 0.15)
+
+    def test_measurement_waits_between_every_point(self) -> None:
+        motor = TrackingMotor()
+        lock_in = TrackingLockIn()
+        settings = ScanSettings(
+            wait_time_ms=40,
+            positive_border_mm=0.005,
+            negative_border_mm=0.0,
+            step_units=1,
+            repeats=1,
+        )
+        motor.initialize()
+        lock_in.initialize()
+        use_case = MeasureSpectrogramUseCase(motor, lock_in)
+
+        points = list(use_case.execute(settings=settings))
+
+        self.assertEqual(len(points), settings.point_count)
+        self.assertGreaterEqual(len(lock_in.read_timestamps), 3)
+        gaps = [
+            current - previous
+            for previous, current in zip(lock_in.read_timestamps, lock_in.read_timestamps[1:])
+        ]
+        self.assertTrue(all(gap >= 0.03 for gap in gaps))
 
 
 if __name__ == "__main__":

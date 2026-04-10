@@ -35,11 +35,6 @@ class MeasureSpectrogramUseCase:
                 self._motor.move_to(settings.start_steps)
                 self._motor.wait_for_stop(settings.wait_time_ms)
 
-                # Let lock-in settle at scan start before first sample.
-                if not self._delay_with_controls(wait_seconds, stop_check, pause_check):
-                    stop_requested = True
-                    break
-
                 for index in range(settings.point_count):
                     if stop_check():
                         stop_requested = True
@@ -48,6 +43,16 @@ class MeasureSpectrogramUseCase:
                     while pause_check() and not stop_check():
                         time.sleep(0.05)
                     if stop_check():
+                        stop_requested = True
+                        break
+
+                    # Let lock-in average after the stage reaches every point.
+                    point_wait_seconds = wait_seconds * 4.0 if index == 0 else wait_seconds
+                    if not self._delay_with_controls(
+                        point_wait_seconds,
+                        stop_check,
+                        pause_check,
+                    ):
                         stop_requested = True
                         break
 
