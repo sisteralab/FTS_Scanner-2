@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from fts_scanner.config import AppConfig
 from fts_scanner.devices.lockin_types import LockInAdapterType
+from fts_scanner.devices.serialized_motor import SerializedMotorDevice
 from fts_scanner.devices.simulated import SimulatedLockInDevice, SimulatedMotorDevice
 from fts_scanner.devices.sr830_visa import SR830VisaLockIn
 from fts_scanner.devices.thzdaqapi_lockin import SR830ThzdaqapiLockIn
@@ -15,6 +16,10 @@ from fts_scanner.devices.ximc_motor import XimcMotorDevice
 from fts_scanner.domain.models import ScanSettings
 from fts_scanner.presentation.device_workers import LockInIoWorker, MotorIoWorker
 from fts_scanner.presentation.measurement_worker import MeasurementWorker
+from fts_scanner.presentation.motor_command_client import (
+    MotorCommandClient,
+    WorkerMotorDevice,
+)
 from fts_scanner.store.measure_store import MeasureManager, MeasureModel, MeasureType
 from fts_scanner.use_cases.measure_spectrogram import MeasureSpectrogramUseCase
 
@@ -70,6 +75,8 @@ class MainController(QObject):
 
         self._motor_thread: QThread | None = None
         self._motor_worker: MotorIoWorker | None = None
+        self._motor_command_client: MotorCommandClient | None = None
+        self._measurement_motor: WorkerMotorDevice | None = None
         self._lockin_thread: QThread | None = None
         self._lockin_worker: LockInIoWorker | None = None
 
@@ -137,7 +144,7 @@ class MainController(QObject):
             logger.exception("Failed to persist app settings")
 
         if use_simulation:
-            self._motor = SimulatedMotorDevice()
+            self._motor = SerializedMotorDevice(SimulatedMotorDevice())
             self._lock_in = SimulatedLockInDevice()
         else:
             resolved_ximc = (
@@ -145,9 +152,11 @@ class MainController(QObject):
                 if self._config.ximc_root.is_absolute()
                 else self._project_root / self._config.ximc_root
             )
-            self._motor = XimcMotorDevice(
-                ximc_root=resolved_ximc,
-                motor_name=self._config.motor_name,
+            self._motor = SerializedMotorDevice(
+                XimcMotorDevice(
+                    ximc_root=resolved_ximc,
+                    motor_name=self._config.motor_name,
+                )
             )
             self._lock_in = self._build_lock_in_device()
 
@@ -186,8 +195,8 @@ class MainController(QObject):
             logger.exception("Lock-In initialization failed")
 
         self._measure_use_case = (
-            MeasureSpectrogramUseCase(self._motor, self._lock_in)
-            if self._motor_ready and self._lock_in_ready
+            MeasureSpectrogramUseCase(self._measurement_motor, self._lock_in)
+            if self._measurement_motor is not None and self._lock_in_ready
             else None
         )
 
@@ -296,7 +305,7 @@ class MainController(QObject):
 
     def start_measurement(self, settings: ScanSettings) -> None:
         """Start spectrogram measurement in background thread."""
-        if self._measure_use_case is None:
+        if self._measure_use_case is None or self._measurement_motor is None:
             self.status_changed.emit("Measurement requires initialized Motor and Lock-In")
             return
         if self.is_measurement_running:
@@ -308,7 +317,7 @@ class MainController(QObject):
         self._motor_timer.stop()
 
         try:
-            self._motor.set_motion_params(
+            self._measurement_motor.set_motion_params(
                 int(self._config.motor_speed),
                 int(self._config.motor_acceleration),
             )
@@ -442,6 +451,8 @@ class MainController(QObject):
         self._stop_motor_worker()
 
         self._motor_worker = MotorIoWorker(motor)
+        self._motor_command_client = MotorCommandClient(self._motor_worker, self)
+        self._measurement_motor = WorkerMotorDevice(self._motor_command_client)
         self._motor_thread = QThread(self)
         self._motor_worker.moveToThread(self._motor_thread)
         self._motor_thread.finished.connect(self._motor_worker.deleteLater)
@@ -509,6 +520,8 @@ class MainController(QObject):
 
         self._motor_thread = None
         self._motor_worker = None
+        self._motor_command_client = None
+        self._measurement_motor = None
 
     def _start_lockin_worker(self, lock_in: object) -> None:
         self._stop_lockin_worker()

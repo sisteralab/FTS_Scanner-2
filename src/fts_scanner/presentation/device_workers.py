@@ -16,6 +16,8 @@ class MotorIoWorker(QObject):
     motion_params_ready = Signal(int, int)
     motion_params_applied = Signal(int, int)
     motion_state_ready = Signal(str)
+    sync_command_completed = Signal(int, object)
+    sync_command_failed = Signal(int, str)
 
     def __init__(self, motor: object) -> None:
         super().__init__()
@@ -28,18 +30,7 @@ class MotorIoWorker(QObject):
     def poll_position(self) -> None:
         """Read current position and active movement state."""
         try:
-            position = int(self._motor.get_position())
-            self.position_ready.emit(position)
-
-            status = self._motor.get_motion_status()
-            state_text = self._format_state_text(
-                is_moving=bool(status.is_moving),
-                has_error=bool(status.has_error),
-                command=str(status.command),
-                command_code=int(status.command_code),
-                position=position,
-            )
-            self._emit_state(state_text)
+            self._read_position_and_state()
         except Exception as exc:  # noqa: BLE001
             logger.exception("Motor position polling failed")
             self.command_error.emit(f"Motor polling error: {exc}")
@@ -48,14 +39,7 @@ class MotorIoWorker(QObject):
     def move_by(self, delta_steps: int, wait_ms: int) -> None:
         """Execute non-blocking relative move and keep polling alive."""
         try:
-            if self._is_jogging:
-                self._motor.stop()
-                self._is_jogging = False
-            current = int(self._motor.get_position())
-            delta = int(delta_steps)
-            self._target_position = current + delta
-            self._motor.move_by(delta)
-            self._emit_state(f"Moving by {delta} steps to {self._target_position}")
+            self._move_by_impl(int(delta_steps))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Relative motor move failed")
             self.command_error.emit(f"Motor move failed: {exc}")
@@ -64,12 +48,7 @@ class MotorIoWorker(QObject):
     def move_to(self, target_steps: int, wait_ms: int) -> None:
         """Execute non-blocking absolute move and keep polling alive."""
         try:
-            if self._is_jogging:
-                self._motor.stop()
-                self._is_jogging = False
-            self._target_position = int(target_steps)
-            self._motor.move_to(self._target_position)
-            self._emit_state(f"Moving to {self._target_position} steps")
+            self._move_to_impl(int(target_steps))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Absolute motor move failed")
             self.command_error.emit(f"Motor move failed: {exc}")
@@ -78,14 +57,7 @@ class MotorIoWorker(QObject):
     def set_zero(self) -> None:
         """Set motor logical zero and emit updated position."""
         try:
-            if self._is_jogging:
-                self._motor.stop()
-                self._is_jogging = False
-            self._motor.set_zero()
-            self._target_position = None
-            position = int(self._motor.get_position())
-            self.position_ready.emit(position)
-            self._emit_state("Zero set")
+            self._set_zero_impl()
         except Exception as exc:  # noqa: BLE001
             logger.exception("Set zero failed")
             self.command_error.emit(f"Set zero failed: {exc}")
@@ -96,12 +68,7 @@ class MotorIoWorker(QObject):
         if direction == 0:
             return
         try:
-            if self._is_jogging:
-                self._motor.stop()
-            self._motor.start_jog(int(direction))
-            self._is_jogging = True
-            self._target_position = None
-            self._emit_state("Jogging right" if direction > 0 else "Jogging left")
+            self._start_jog_impl(int(direction))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Start jog failed")
             self.command_error.emit(f"Start jog failed: {exc}")
@@ -110,12 +77,7 @@ class MotorIoWorker(QObject):
     def stop_motion(self) -> None:
         """Stop current motor motion."""
         try:
-            self._motor.stop()
-            self._is_jogging = False
-            self._target_position = None
-            position = int(self._motor.get_position())
-            self.position_ready.emit(position)
-            self._emit_state("Stopped")
+            self._stop_impl()
         except Exception as exc:  # noqa: BLE001
             logger.exception("Stop motor failed")
             self.command_error.emit(f"Stop motor failed: {exc}")
@@ -124,7 +86,7 @@ class MotorIoWorker(QObject):
     def read_motion_params(self) -> None:
         """Read speed/acceleration parameters from motor."""
         try:
-            speed, acceleration = self._motor.get_motion_params()
+            speed, acceleration = self._get_motion_params_impl()
             self.motion_params_ready.emit(int(speed), int(acceleration))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Read motion params failed")
@@ -134,8 +96,10 @@ class MotorIoWorker(QObject):
     def set_motion_params(self, speed: int, acceleration: int) -> None:
         """Apply speed/acceleration parameters to motor."""
         try:
-            self._motor.set_motion_params(int(speed), int(acceleration))
-            applied_speed, applied_accel = self._motor.get_motion_params()
+            applied_speed, applied_accel = self._set_motion_params_impl(
+                int(speed),
+                int(acceleration),
+            )
             self.motion_params_applied.emit(int(applied_speed), int(applied_accel))
             self.motion_params_ready.emit(int(applied_speed), int(applied_accel))
         except Exception as exc:  # noqa: BLE001
@@ -170,6 +134,175 @@ class MotorIoWorker(QObject):
             return
         self._last_state_text = text
         self.motion_state_ready.emit(text)
+
+    def _read_position_and_state(self) -> int:
+        position = int(self._motor.get_position())
+        self.position_ready.emit(position)
+        status = self._motor.get_motion_status()
+        self._emit_state(
+            self._format_state_text(
+                is_moving=bool(status.is_moving),
+                has_error=bool(status.has_error),
+                command=str(status.command),
+                command_code=int(status.command_code),
+                position=position,
+            )
+        )
+        return position
+
+    def _move_by_impl(self, delta_steps: int) -> None:
+        if self._is_jogging:
+            self._motor.stop()
+            self._is_jogging = False
+        current = int(self._motor.get_position())
+        self._target_position = current + int(delta_steps)
+        self._motor.move_by(int(delta_steps))
+        self._emit_state(f"Moving by {int(delta_steps)} steps to {self._target_position}")
+
+    def _move_to_impl(self, target_steps: int) -> None:
+        if self._is_jogging:
+            self._motor.stop()
+            self._is_jogging = False
+        self._target_position = int(target_steps)
+        self._motor.move_to(self._target_position)
+        self._emit_state(f"Moving to {self._target_position} steps")
+
+    def _set_zero_impl(self) -> None:
+        if self._is_jogging:
+            self._motor.stop()
+            self._is_jogging = False
+        self._motor.set_zero()
+        self._target_position = None
+        position = int(self._motor.get_position())
+        self.position_ready.emit(position)
+        self._emit_state("Zero set")
+
+    def _start_jog_impl(self, direction: int) -> None:
+        if self._is_jogging:
+            self._motor.stop()
+        self._motor.start_jog(int(direction))
+        self._is_jogging = True
+        self._target_position = None
+        self._emit_state("Jogging right" if direction > 0 else "Jogging left")
+
+    def _stop_impl(self) -> None:
+        self._motor.stop()
+        self._is_jogging = False
+        self._target_position = None
+        position = int(self._motor.get_position())
+        self.position_ready.emit(position)
+        self._emit_state("Stopped")
+
+    def _get_motion_params_impl(self) -> tuple[int, int]:
+        speed, acceleration = self._motor.get_motion_params()
+        return int(speed), int(acceleration)
+
+    def _set_motion_params_impl(self, speed: int, acceleration: int) -> tuple[int, int]:
+        self._motor.set_motion_params(int(speed), int(acceleration))
+        return self._get_motion_params_impl()
+
+    @Slot(int, int)
+    def sync_move_to(self, request_id: int, target_steps: int) -> None:
+        try:
+            self._move_to_impl(int(target_steps))
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int, int)
+    def sync_move_by(self, request_id: int, delta_steps: int) -> None:
+        try:
+            self._move_by_impl(int(delta_steps))
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int, int)
+    def sync_wait_for_stop(self, request_id: int, wait_ms: int) -> None:
+        try:
+            self._motor.wait_for_stop(int(wait_ms))
+            self._read_position_and_state()
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Wait for stop failed")
+            self.sync_command_failed.emit(int(request_id), f"Motor wait failed: {exc}")
+
+    @Slot(int)
+    def sync_get_position(self, request_id: int) -> None:
+        try:
+            position = self._read_position_and_state()
+            self.sync_command_completed.emit(int(request_id), position)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Sync get position failed")
+            self.sync_command_failed.emit(int(request_id), f"Get position failed: {exc}")
+
+    @Slot(int)
+    def sync_set_zero(self, request_id: int) -> None:
+        try:
+            self._set_zero_impl()
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int)
+    def sync_stop(self, request_id: int) -> None:
+        try:
+            self._stop_impl()
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int, int)
+    def sync_start_jog(self, request_id: int, direction: int) -> None:
+        try:
+            if int(direction) == 0:
+                self.sync_command_completed.emit(int(request_id), None)
+                return
+            self._start_jog_impl(int(direction))
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int)
+    def sync_get_motion_params(self, request_id: int) -> None:
+        try:
+            speed, acceleration = self._get_motion_params_impl()
+            self.motion_params_ready.emit(int(speed), int(acceleration))
+            self.sync_command_completed.emit(
+                int(request_id),
+                (int(speed), int(acceleration)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Sync read motion params failed")
+            self.sync_command_failed.emit(
+                int(request_id),
+                f"Read motion params failed: {exc}",
+            )
+
+    @Slot(int, int, int)
+    def sync_set_motion_params(self, request_id: int, speed: int, acceleration: int) -> None:
+        try:
+            applied_speed, applied_accel = self._set_motion_params_impl(
+                int(speed),
+                int(acceleration),
+            )
+            self.motion_params_applied.emit(int(applied_speed), int(applied_accel))
+            self.motion_params_ready.emit(int(applied_speed), int(applied_accel))
+            self.sync_command_completed.emit(int(request_id), None)
+        except Exception as exc:  # noqa: BLE001
+            self.sync_command_failed.emit(int(request_id), str(exc))
+
+    @Slot(int)
+    def sync_get_motion_status(self, request_id: int) -> None:
+        try:
+            status = self._motor.get_motion_status()
+            self.sync_command_completed.emit(int(request_id), status)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Sync get motion status failed")
+            self.sync_command_failed.emit(
+                int(request_id),
+                f"Read motion status failed: {exc}",
+            )
 
 
 class LockInIoWorker(QObject):

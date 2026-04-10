@@ -232,7 +232,9 @@ class MonitorTab(QWidget):
         self.stop_monitor_button.setEnabled(is_running)
 
     def hideEvent(self, event) -> None:  # noqa: N802, ANN001
-        self._emergency_stop()
+        # Tab switching should not cancel normal moves or measurement motion.
+        # Only stop an actively held jog because the release event may never arrive.
+        self._stop_jog()
         super().hideEvent(event)
 
     def _std_icon(self, name: str) -> QIcon:
