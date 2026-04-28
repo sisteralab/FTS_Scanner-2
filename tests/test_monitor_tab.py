@@ -30,9 +30,10 @@ class FakeController(QObject):
         super().__init__()
         self.config = SimpleNamespace(motor_speed=1000, motor_acceleration=500)
         self.stop_calls = 0
+        self.start_record_stream: bool | None = None
 
-    def start_monitoring(self) -> None:
-        return None
+    def start_monitoring(self, record_stream: bool = False) -> None:
+        self.start_record_stream = bool(record_stream)
 
     def stop_monitoring(self) -> None:
         return None
@@ -88,6 +89,15 @@ class TestMonitorTab(unittest.TestCase):
         self.assertFalse(tab.move_to_button.isEnabled())
         self.assertFalse(tab.jog_left_button.isEnabled())
         self.assertTrue(tab.emergency_stop_button.isEnabled())
+
+    def test_start_monitoring_passes_stream_recording_flag(self) -> None:
+        controller = FakeController()
+        tab = MonitorTab(controller)
+        tab.save_monitor_stream_checkbox.setChecked(True)
+
+        tab._start_monitoring()
+
+        self.assertTrue(controller.start_record_stream)
 
 
 if __name__ == "__main__":

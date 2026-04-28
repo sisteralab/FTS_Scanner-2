@@ -80,6 +80,25 @@ class TestMeasureStore(unittest.TestCase):
         self.assertEqual(len(quicklook["frequency_thz"]), len(quicklook["spectrum"]))
         json.dumps(payload, ensure_ascii=False, indent=2)
 
+    def test_lockin_monitor_json_preserves_compact_arrays(self) -> None:
+        measure = MeasureManager.create(
+            measure_type=MeasureType.LOCKIN_MONITOR,
+            data={
+                "time": [0.0, 0.2],
+                "voltage": [1.1, 1.2],
+                "meta": {"status": "stopped"},
+            },
+        )
+
+        payload = measure.to_json()
+
+        self.assertEqual(measure.points_count, 2)
+        self.assertEqual(payload["data"]["time"], [0.0, 0.2])
+        self.assertEqual(payload["data"]["voltage"], [1.1, 1.2])
+        self.assertEqual(payload["data"]["quicklook"]["time"], [0.0, 0.2])
+        self.assertEqual(payload["data"]["quicklook"]["voltage"], [1.1, 1.2])
+        json.dumps(payload, ensure_ascii=False, indent=2)
+
 
 if __name__ == "__main__":
     unittest.main()

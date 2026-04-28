@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from fts_scanner.config import AppConfig
 from fts_scanner.presentation.controller import MainController
+from fts_scanner.store.measure_store import MeasureManager, MeasureType
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -52,7 +53,17 @@ class TestMainControllerMotorCommands(unittest.TestCase):
         )
         self.controller = MainController(config, Path.cwd())
         self.controller._motor_ready = True
+        self.controller._lock_in_ready = True
         self.controller._motor_command_client = FakeMotorCommandClient()
+        MeasureManager._instances.clear()
+        MeasureManager.latest_id = 0
+        MeasureManager.table = None
+
+    def tearDown(self) -> None:
+        self.controller.stop_monitoring()
+        MeasureManager._instances.clear()
+        MeasureManager.latest_id = 0
+        MeasureManager.table = None
 
     def test_move_motor_to_uses_motor_command_client(self) -> None:
         self.controller.move_motor_to(125)
@@ -71,6 +82,24 @@ class TestMainControllerMotorCommands(unittest.TestCase):
         )
         self.assertEqual(self.controller.config.motor_speed, 1400)
         self.assertEqual(self.controller.config.motor_acceleration, 650)
+
+    def test_lockin_monitor_recording_uses_time_and_voltage_arrays(self) -> None:
+        self.controller.start_monitoring(record_stream=True)
+
+        self.controller._on_lockin_signal(1.25)
+        self.controller._on_lockin_signal(1.50)
+        self.controller.stop_monitoring()
+
+        measure = MeasureManager.all().last()
+        self.assertIsNotNone(measure)
+        self.assertEqual(measure.measure_type, MeasureType.LOCKIN_MONITOR)
+        self.assertEqual(measure.points_count, 2)
+        self.assertEqual(measure.data["voltage"], [1.25, 1.50])
+        self.assertEqual(len(measure.data["time"]), 2)
+        self.assertGreaterEqual(measure.data["time"][0], 0.0)
+        self.assertGreaterEqual(measure.data["time"][1], measure.data["time"][0])
+        self.assertEqual(measure.data["meta"]["status"], "stopped")
+        self.assertEqual(measure.data["meta"]["samples_count"], 2)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
@@ -75,6 +77,8 @@ class MainController(QObject):
         self._thread: QThread | None = None
         self._worker: MeasurementWorker | None = None
         self._current_measure: MeasureModel | None = None
+        self._current_monitor_measure: MeasureModel | None = None
+        self._monitor_record_started_epoch: float | None = None
         self._last_error: str | None = None
 
     @property
@@ -202,7 +206,7 @@ class MainController(QObject):
         self.initialized.emit(ok)
         logger.info("Setup result. motor_ok=%s lockin_ok=%s", self._motor_ready, self._lock_in_ready)
 
-    def start_monitoring(self) -> None:
+    def start_monitoring(self, record_stream: bool = False) -> None:
         """Enable periodic lock-in and motor polling."""
         if self.is_monitoring():
             self.status_changed.emit("Monitoring already running")
@@ -210,21 +214,51 @@ class MainController(QObject):
         if not self._motor_ready and not self._lock_in_ready:
             self.status_changed.emit("Monitoring is unavailable: initialize devices first")
             return
+        if record_stream and not self._lock_in_ready:
+            self.status_changed.emit("Lock-In stream recording requires initialized Lock-In")
+            return
+
+        if record_stream:
+            started_epoch = time.time()
+            self._monitor_record_started_epoch = started_epoch
+            self._current_monitor_measure = MeasureManager.create(
+                measure_type=MeasureType.LOCKIN_MONITOR,
+                data={
+                    "settings": {
+                        "sample_interval_ms": self._monitor_timer.interval(),
+                    },
+                    "time": [],
+                    "voltage": [],
+                    "meta": {
+                        "status": "running",
+                        "started_at_epoch": started_epoch,
+                        "started_at_iso": datetime.now().isoformat(),
+                    },
+                },
+            )
 
         if self._lock_in_ready and self._lockin_worker is not None:
             self._monitor_timer.start()
 
         logger.info("Monitoring started")
-        self.status_changed.emit("Monitoring started")
+        status = "Monitoring started"
+        if self._current_monitor_measure is not None:
+            status = "Monitoring started with Lock-In stream recording"
+        self.status_changed.emit(status)
         self.monitoring_state_changed.emit(True)
 
     def stop_monitoring(self) -> None:
         """Disable periodic lock-in and motor polling."""
         was_running = self._monitor_timer.isActive()
         self._monitor_timer.stop()
-        if was_running:
+        was_recording = self._current_monitor_measure is not None
+        self._finish_monitor_recording(status="stopped")
+        if was_running or was_recording:
             logger.info("Monitoring stopped")
-            self.status_changed.emit("Monitoring stopped")
+            status = "Monitoring stopped"
+            if was_recording:
+                status = "Monitoring stopped; Lock-In stream saved to table"
+            self.status_changed.emit(status)
             self.monitoring_state_changed.emit(False)
 
     def is_monitoring(self) -> bool:
@@ -535,7 +569,7 @@ class MainController(QObject):
         self._lockin_thread.finished.connect(self._lockin_worker.deleteLater)
 
         self.lockin_poll_requested.connect(self._lockin_worker.read_signal)
-        self._lockin_worker.signal_ready.connect(self.monitoring_signal.emit)
+        self._lockin_worker.signal_ready.connect(self._on_lockin_signal)
         self._lockin_worker.poll_error.connect(self._on_lockin_worker_error)
 
         self._lockin_thread.start()
@@ -547,7 +581,7 @@ class MainController(QObject):
             except Exception:  # noqa: BLE001
                 pass
             try:
-                self._lockin_worker.signal_ready.disconnect(self.monitoring_signal.emit)
+                self._lockin_worker.signal_ready.disconnect(self._on_lockin_signal)
             except Exception:  # noqa: BLE001
                 pass
             try:
@@ -580,8 +614,46 @@ class MainController(QObject):
         logger.error(error)
         self.status_changed.emit(error)
         self._monitor_timer.stop()
+        self._finish_monitor_recording(status="failed", error=error)
         if not self._motor_timer.isActive():
             self.monitoring_state_changed.emit(False)
+
+    def _on_lockin_signal(self, value: float) -> None:
+        if self._current_monitor_measure is not None:
+            started_epoch = self._monitor_record_started_epoch or time.time()
+            elapsed = time.time() - started_epoch
+            time_values = self._current_monitor_measure.data.setdefault("time", [])
+            voltage_values = self._current_monitor_measure.data.setdefault("voltage", [])
+            if isinstance(time_values, list) and isinstance(voltage_values, list):
+                time_values.append(elapsed)
+                voltage_values.append(float(value))
+                if len(voltage_values) % 10 == 0:
+                    self._current_monitor_measure.save(finish=False)
+
+        self.monitoring_signal.emit(float(value))
+
+    def _finish_monitor_recording(self, status: str, error: str | None = None) -> None:
+        if self._current_monitor_measure is None:
+            self._monitor_record_started_epoch = None
+            return
+
+        now_epoch = time.time()
+        meta = self._current_monitor_measure.data.setdefault("meta", {})
+        if isinstance(meta, dict):
+            meta["status"] = status
+            meta["finished_at_epoch"] = now_epoch
+            meta["finished_at_iso"] = datetime.now().isoformat()
+            if self._monitor_record_started_epoch is not None:
+                meta["duration_seconds"] = now_epoch - self._monitor_record_started_epoch
+            voltage_values = self._current_monitor_measure.data.get("voltage", [])
+            if isinstance(voltage_values, list):
+                meta["samples_count"] = len(voltage_values)
+            if error:
+                meta["error"] = error
+
+        self._current_monitor_measure.save(finish=True)
+        self._current_monitor_measure = None
+        self._monitor_record_started_epoch = None
 
     def _on_motor_motion_params_ready(self, speed: int, acceleration: int) -> None:
         self._config.motor_speed = int(speed)

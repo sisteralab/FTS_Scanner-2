@@ -19,9 +19,11 @@ class MeasureType:
     """Supported measurement types."""
 
     SPECTROGRAM = "spectrogram"
+    LOCKIN_MONITOR = "lockin_monitor"
 
     CHOICES = {
         SPECTROGRAM: "FTS spectrogram",
+        LOCKIN_MONITOR: "Lock-In monitor",
     }
 
 
@@ -170,6 +172,11 @@ class MeasureModel:
     @property
     def points_count(self) -> int:
         points = self.data.get("points", [])
+        if isinstance(points, list) and points:
+            return len(points)
+        voltage = self.data.get("voltage", [])
+        if isinstance(voltage, list):
+            return len(voltage)
         return len(points) if isinstance(points, list) else 0
 
     def get_attr_by_ind(self, ind: int) -> Any:

@@ -62,6 +62,22 @@ def normalize_measure_data(measure_type: str, data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {"type": measure_type, "settings": {}, "points": []}
 
+    if measure_type == "lockin_monitor":
+        time_values = data.get("time", [])
+        voltage_values = data.get("voltage", [])
+        if not isinstance(time_values, list):
+            time_values = []
+        if not isinstance(voltage_values, list):
+            voltage_values = []
+        return {
+            "type": measure_type,
+            "settings": to_json_compatible(data.get("settings", {})),
+            "time": to_json_compatible(time_values),
+            "voltage": to_json_compatible(voltage_values),
+            "points": [],
+            "meta": to_json_compatible(data.get("meta", {})),
+        }
+
     points = data.get("points", [])
     if not isinstance(points, list):
         points = []
@@ -77,6 +93,13 @@ def normalize_measure_data(measure_type: str, data: Any) -> dict[str, Any]:
 def enrich_measure_data_for_export(data: dict[str, Any]) -> dict[str, Any]:
     """Add quick-plot arrays to normalized measurement data."""
     normalized = normalize_measure_data(measure_type=str(data.get("type", "")), data=data)
+    if normalized.get("type") == "lockin_monitor":
+        normalized["quicklook"] = {
+            "time": normalized.get("time", []),
+            "voltage": normalized.get("voltage", []),
+        }
+        return normalized
+
     points = normalized.get("points", [])
     settings = normalized.get("settings", {})
 

@@ -5,6 +5,7 @@ import time
 import pyqtgraph as pg
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -43,6 +44,11 @@ class MonitorTab(QWidget):
         self.stop_monitor_button.setStyleSheet("background: #b22323;")
         actions.addWidget(self.start_monitor_button)
         actions.addWidget(self.stop_monitor_button)
+        self.save_monitor_stream_checkbox = QCheckBox("Save Lock-In stream", self)
+        self.save_monitor_stream_checkbox.setToolTip(
+            "Store monitor samples as time/voltage arrays in the measurements table"
+        )
+        actions.addWidget(self.save_monitor_stream_checkbox)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -181,7 +187,7 @@ class MonitorTab(QWidget):
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
         self._stream_curve.setData([], [])
-        self._controller.start_monitoring()
+        self._controller.start_monitoring(self.save_monitor_stream_checkbox.isChecked())
 
     def _start_jog(self, direction: int) -> None:
         self._jog_direction = direction
@@ -239,6 +245,7 @@ class MonitorTab(QWidget):
         monitoring_available = self._motor_ready or self._lockin_ready
         self.start_monitor_button.setEnabled(monitoring_available and not is_running)
         self.stop_monitor_button.setEnabled(is_running)
+        self.save_monitor_stream_checkbox.setEnabled(self._lockin_ready and not is_running)
 
     def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, _message: str) -> None:
         self._motor_ready = bool(motor_ok)
