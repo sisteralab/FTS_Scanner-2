@@ -84,7 +84,7 @@ class TestMainControllerMotorCommands(unittest.TestCase):
         self.assertEqual(self.controller.config.motor_acceleration, 650)
 
     def test_lockin_monitor_recording_uses_time_and_voltage_arrays(self) -> None:
-        self.controller.start_monitoring(record_stream=True)
+        self.controller.start_monitoring(record_stream=True, poll_interval_ms=750)
 
         self.controller._on_lockin_signal(1.25)
         self.controller._on_lockin_signal(1.50)
@@ -100,6 +100,12 @@ class TestMainControllerMotorCommands(unittest.TestCase):
         self.assertGreaterEqual(measure.data["time"][1], measure.data["time"][0])
         self.assertEqual(measure.data["meta"]["status"], "stopped")
         self.assertEqual(measure.data["meta"]["samples_count"], 2)
+        self.assertEqual(measure.data["settings"]["sample_interval_ms"], 750)
+
+    def test_monitoring_poll_interval_is_clamped(self) -> None:
+        self.controller.start_monitoring(poll_interval_ms=20_000)
+
+        self.assertEqual(self.controller._monitor_timer.interval(), 10_000)
 
 
 if __name__ == "__main__":

@@ -206,7 +206,7 @@ class MainController(QObject):
         self.initialized.emit(ok)
         logger.info("Setup result. motor_ok=%s lockin_ok=%s", self._motor_ready, self._lock_in_ready)
 
-    def start_monitoring(self, record_stream: bool = False) -> None:
+    def start_monitoring(self, record_stream: bool = False, poll_interval_ms: int = 200) -> None:
         """Enable periodic lock-in and motor polling."""
         if self.is_monitoring():
             self.status_changed.emit("Monitoring already running")
@@ -217,6 +217,9 @@ class MainController(QObject):
         if record_stream and not self._lock_in_ready:
             self.status_changed.emit("Lock-In stream recording requires initialized Lock-In")
             return
+
+        poll_interval_ms = max(1, min(10_000, int(poll_interval_ms)))
+        self._monitor_timer.setInterval(poll_interval_ms)
 
         if record_stream:
             started_epoch = time.time()

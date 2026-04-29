@@ -31,9 +31,11 @@ class FakeController(QObject):
         self.config = SimpleNamespace(motor_speed=1000, motor_acceleration=500)
         self.stop_calls = 0
         self.start_record_stream: bool | None = None
+        self.start_poll_interval_ms: int | None = None
 
-    def start_monitoring(self, record_stream: bool = False) -> None:
+    def start_monitoring(self, record_stream: bool = False, poll_interval_ms: int = 200) -> None:
         self.start_record_stream = bool(record_stream)
+        self.start_poll_interval_ms = int(poll_interval_ms)
 
     def stop_monitoring(self) -> None:
         return None
@@ -94,10 +96,12 @@ class TestMonitorTab(unittest.TestCase):
         controller = FakeController()
         tab = MonitorTab(controller)
         tab.save_monitor_stream_checkbox.setChecked(True)
+        tab.poll_interval_ms_spin.setValue(750)
 
         tab._start_monitoring()
 
         self.assertTrue(controller.start_record_stream)
+        self.assertEqual(controller.start_poll_interval_ms, 750)
 
 
 if __name__ == "__main__":

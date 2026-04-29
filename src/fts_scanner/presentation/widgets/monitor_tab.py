@@ -144,8 +144,13 @@ class MonitorTab(QWidget):
         self.window_seconds_spin = QSpinBox(lockin_box)
         self.window_seconds_spin.setRange(1, 600)
         self.window_seconds_spin.setValue(30)
+        self.poll_interval_ms_spin = QSpinBox(lockin_box)
+        self.poll_interval_ms_spin.setRange(1, 10_000)
+        self.poll_interval_ms_spin.setValue(200)
+        self.poll_interval_ms_spin.setSuffix(" ms")
         top_info.addRow("Current signal", self.current_signal_label)
         top_info.addRow("Visible window (s)", self.window_seconds_spin)
+        top_info.addRow("Poll period", self.poll_interval_ms_spin)
 
         self.stream_plot = pg.PlotWidget(lockin_box)
         self.stream_plot.setBackground("w")
@@ -187,7 +192,10 @@ class MonitorTab(QWidget):
     def _start_monitoring(self) -> None:
         self._signal_samples.clear()
         self._stream_curve.setData([], [])
-        self._controller.start_monitoring(self.save_monitor_stream_checkbox.isChecked())
+        self._controller.start_monitoring(
+            self.save_monitor_stream_checkbox.isChecked(),
+            self.poll_interval_ms_spin.value(),
+        )
 
     def _start_jog(self, direction: int) -> None:
         self._jog_direction = direction
@@ -246,6 +254,7 @@ class MonitorTab(QWidget):
         self.start_monitor_button.setEnabled(monitoring_available and not is_running)
         self.stop_monitor_button.setEnabled(is_running)
         self.save_monitor_stream_checkbox.setEnabled(self._lockin_ready and not is_running)
+        self.poll_interval_ms_spin.setEnabled(self._lockin_ready and not is_running)
 
     def _on_setup_status(self, motor_ok: bool, lockin_ok: bool, _message: str) -> None:
         self._motor_ready = bool(motor_ok)
